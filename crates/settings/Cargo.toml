@@ -1,0 +1,13 @@
+[package]
+name = "snowy-settings"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snowy-core.workspace = true
+snowy-art.workspace = true
+snowy-weather.workspace = true
+snowy-wallpaper.workspace = true
+anyhow.workspace = true
+eframe = { version = "0.35.0", default-features = false, features = ["glow", "default_fonts"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_Globalization", "Win32_UI_WindowsAndMessaging", "Win32_System_Registry"] }

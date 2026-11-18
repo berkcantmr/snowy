@@ -1,0 +1,15 @@
+[package]
+name = "snowy-props"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snowy-core.workspace = true
+snowy-art.workspace = true
+fastrand.workspace = true
+log.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows]
+workspace = true
+features = ["Win32_System_SystemInformation"]

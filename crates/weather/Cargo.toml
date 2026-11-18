@@ -1,0 +1,12 @@
+[package]
+name = "snowy-weather"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snowy-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+ureq = { version = "2", default-features = false, features = ["tls"] }

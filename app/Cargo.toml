@@ -1,0 +1,24 @@
+[package]
+name = "snowy"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "snowy"
+path = "src/main.rs"
+
+[dependencies]
+snowy-core.workspace = true
+snowy-gfx.workspace = true
+snowy-effects.workspace = true
+snowy-sys.workspace = true
+snowy-settings.workspace = true
+snowy-props.workspace = true
+snowy-weather.workspace = true
+snowy-wallpaper.workspace = true
+anyhow.workspace = true
+log.workspace = true
+fastrand.workspace = true
+
+[build-dependencies]
+winresource = "0.1"

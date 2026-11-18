@@ -1,0 +1,11 @@
+[package]
+name = "snowy-effects"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snowy-core.workspace = true
+fastrand.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.61", features = ["Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Direct3D"] }

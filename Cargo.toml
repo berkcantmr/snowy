@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/gfx", "crates/effects", "crates/sys", "crates/settings", "crates/art", "crates/props", "crates/weather", "crates/wallpaper", "app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+snowy-core = { path = "crates/core" }
+snowy-gfx = { path = "crates/gfx" }
+snowy-effects = { path = "crates/effects" }
+snowy-sys = { path = "crates/sys" }
+snowy-settings = { path = "crates/settings" }
+snowy-art = { path = "crates/art" }
+snowy-props = { path = "crates/props" }
+snowy-weather = { path = "crates/weather" }
+snowy-wallpaper = { path = "crates/wallpaper" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bytemuck = { version = "1", features = ["derive"] }
+windows = "0.61"
+fastrand = "2"
+anyhow = "1"
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
