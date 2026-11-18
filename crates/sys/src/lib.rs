@@ -7,6 +7,7 @@ mod instance;
 mod monitor;
 mod power;
 mod pump;
+mod toast;
 mod tray;
 
 pub use autostart::set_autostart;
@@ -14,6 +15,7 @@ pub use instance::{single_instance, InstanceGuard};
 pub use monitor::{init_dpi_awareness, monitors, ui_language};
 pub use power::{foreground_is_fullscreen, on_battery};
 pub use pump::{pump_messages, wait_vblank};
+pub use toast::{Key, Toast, ToastIcon};
 pub use tray::{Tray, TrayCommand, TrayState};
 
 mod scene;
