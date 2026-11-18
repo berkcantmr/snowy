@@ -7,6 +7,7 @@ mod editor_logic;
 mod fonts;
 mod state;
 mod ui;
+mod update_ui;
 mod win;
 
 use snowy_core::MonitorInfo;
@@ -15,6 +16,11 @@ use snowy_core::MonitorInfo;
 /// `monitors` is passed in so this crate needs no Win32 code.
 pub fn run(monitors: Vec<MonitorInfo>) -> anyhow::Result<()> {
     run_with(monitors, None)
+}
+
+/// Like `run`, opening on the given page (`about`, `system`, ...; unknown = first page).
+pub fn run_page(monitors: Vec<MonitorInfo>, page: Option<&str>) -> anyhow::Result<()> {
+    run_inner(monitors, None, None, page.and_then(state::Page::from_id).unwrap_or_default())
 }
 
 /// Like `run`, optionally closing automatically after `auto_close` (used by the demo example).
@@ -29,6 +35,15 @@ pub fn run_demo(
     monitors: Vec<MonitorInfo>,
     auto_close: Option<std::time::Duration>,
     page_cycle: Option<std::time::Duration>,
+) -> anyhow::Result<()> {
+    run_inner(monitors, auto_close, page_cycle, state::Page::default())
+}
+
+fn run_inner(
+    monitors: Vec<MonitorInfo>,
+    auto_close: Option<std::time::Duration>,
+    page_cycle: Option<std::time::Duration>,
+    page: state::Page,
 ) -> anyhow::Result<()> {
     let Some(_guard) = win::acquire_single_instance() else {
         return Ok(());
@@ -51,7 +66,7 @@ pub fn run_demo(
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx, lang);
-            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, settings, monitors, auto_close, page_cycle)))
+            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, settings, monitors, auto_close, page_cycle, page)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("settings window failed: {e}"))

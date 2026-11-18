@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 //! Snowy: desktop weather effects. Main process = tray + overlays + render loop.
-//! `snowy.exe --settings` = settings window process.
+//! `snowy.exe --settings [--page about]` = settings window process.
 
 use snowy_core::config::Settings;
 use snowy_core::{i18n, Effect, EffectChoice, EffectKind, Env, MonitorInfo, Pointer, Scene, Surface, WorldEvent};
@@ -37,6 +37,10 @@ struct App {
     zones_screen: Vec<snowy_sys::ScreenRect>,
     /// Started on demand when the effect choice is Weather.
     weather: Option<snowy_weather::WeatherWatch>,
+    /// Running while `check_updates` is on.
+    update: Option<snowy_update::UpdateWatch>,
+    /// Version currently offered in the tray menu.
+    update_shown: Option<String>,
     wallpaper: WallpaperState,
 }
 
@@ -61,7 +65,8 @@ fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--settings") {
-        return snowy_settings::run(snowy_sys::monitors());
+        let page = args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).map(String::as_str);
+        return snowy_settings::run_page(snowy_sys::monitors(), page);
     }
     if let Some(i) = args.iter().position(|a| a == "--edit") {
         let monitor = args.get(i + 1).cloned().unwrap_or_default();
@@ -71,7 +76,7 @@ fn main() -> anyhow::Result<()> {
 
     let Some(_guard) = snowy_sys::single_instance() else {
         // Already running: just open settings for the user.
-        open_settings();
+        open_settings(None);
         return Ok(());
     };
 
@@ -79,11 +84,11 @@ fn main() -> anyhow::Result<()> {
     let settings = Settings::load();
     sync_autostart(settings.start_with_windows);
     let lang = lang_of(&settings);
-    let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang })?;
+    let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang, update: None })?;
 
     let mut app = App {
         settings_mtime: mtime(),
-        settings,
+        settings: settings.clone(),
         screens: Vec::new(),
         active: None,
         user_paused: false,
@@ -96,6 +101,8 @@ fn main() -> anyhow::Result<()> {
         zones_local: Vec::new(),
         zones_screen: Vec::new(),
         weather: None,
+        update: settings.check_updates.then(snowy_update::UpdateWatch::start),
+        update_shown: None,
         wallpaper: WallpaperState::default(),
     };
     app.rebuild_screens();
@@ -126,6 +133,9 @@ fn main() -> anyhow::Result<()> {
             if m != app.settings_mtime {
                 app.settings_mtime = m;
                 app.apply_settings(Settings::load());
+            }
+            if app.available_update() != app.update_shown {
+                app.refresh_tray();
             }
             for s in &mut app.screens {
                 s.props.poll_reload();
@@ -260,7 +270,14 @@ impl App {
                     s.props.call_yeti();
                 }
             }
-            TrayCommand::OpenSettings => open_settings(),
+            TrayCommand::OpenSettings => open_settings(None),
+            TrayCommand::UpdateNow => open_settings(Some("about")),
+            TrayCommand::SkipUpdate => {
+                if let Some(v) = self.available_update() {
+                    snowy_update::skip(&v);
+                }
+                self.refresh_tray();
+            }
             TrayCommand::Quit => return false,
         }
         true
@@ -364,6 +381,9 @@ impl App {
         if self.settings.effect != EffectChoice::Weather {
             // Stop polling the network as soon as the user leaves "Match my weather".
             self.weather = None;
+        }
+        if old.check_updates != self.settings.check_updates {
+            self.update = self.settings.check_updates.then(snowy_update::UpdateWatch::start);
         }
         if old.start_with_windows != self.settings.start_with_windows {
             sync_autostart(self.settings.start_with_windows);
@@ -547,11 +567,18 @@ impl App {
         grab.set_zones(&self.zones_screen);
     }
 
+    /// Version of a newer, non-skipped release, if the update watch found one.
+    fn available_update(&self) -> Option<String> {
+        self.update.as_ref()?.current().map(|r| r.version)
+    }
+
     fn refresh_tray(&mut self) {
+        self.update_shown = self.available_update();
         let state = TrayState {
             effect: self.settings.effect,
             paused: self.user_paused,
             lang: lang_of(&self.settings),
+            update: self.update_shown.clone(),
         };
         self.tray.update(&state);
     }
@@ -793,9 +820,14 @@ fn open_editor(monitor_id: &str, prop_id: u64) {
     }
 }
 
-fn open_settings() {
+fn open_settings(page: Option<&str>) {
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe).arg("--settings").spawn();
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("--settings");
+        if let Some(p) = page {
+            cmd.arg("--page").arg(p);
+        }
+        let _ = cmd.spawn();
     }
 }
 

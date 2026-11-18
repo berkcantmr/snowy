@@ -27,6 +27,7 @@ pub struct SettingsApp {
     auto_close: Option<Duration>,
     page_cycle: Option<Duration>,
     was_focused: bool,
+    pub(crate) update: crate::update_ui::UpdateUi,
 }
 
 impl SettingsApp {
@@ -36,6 +37,7 @@ impl SettingsApp {
         monitors: Vec<MonitorInfo>,
         auto_close: Option<Duration>,
         page_cycle: Option<Duration>,
+        page: Page,
     ) -> Self {
         let pal = theme::palette(crate::win::system_prefers_dark());
         theme::apply(ctx, &pal);
@@ -47,7 +49,7 @@ impl SettingsApp {
             lang,
             font_lang: lang,
             windows_locale,
-            page: Page::default(),
+            page,
             pal,
             anim_until: 2.5,
             thumbs: Default::default(),
@@ -58,6 +60,7 @@ impl SettingsApp {
             auto_close,
             page_cycle,
             was_focused: true,
+            update: Default::default(),
         }
     }
 
@@ -192,6 +195,10 @@ impl eframe::App for SettingsApp {
             }
         }
         self.was_focused = focused;
+
+        if self.update.poll(&ctx) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         if let Some(interval) = self.page_cycle {
             let idx = (self.start.elapsed().as_secs_f32() / interval.as_secs_f32().max(0.1)) as usize;

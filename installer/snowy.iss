@@ -24,7 +24,10 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+; In-app updates run this installer with /SILENT /CLOSEAPPLICATIONS: running Snowy processes are
+; closed, and the [Run] entry below relaunches Snowy ourselves.
 CloseApplications=yes
+RestartApplications=no
 VersionInfoVersion={#MyAppVersion}
 
 [Languages]
@@ -56,6 +59,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: 
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "{cm:LaunchProgram,Snowy}"; Flags: nowait postinstall skipifsilent
+; Silent (in-app) updates relaunch Snowy.
+Filename: "{app}\{#MyAppExe}"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#MyAppExe} /F"; Flags: runhidden; RunOnceId: "KillSnowy"

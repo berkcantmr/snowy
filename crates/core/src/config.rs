@@ -44,6 +44,8 @@ pub struct Settings {
     pub wallpaper_time: String,
     /// The user's own wallpaper path, saved the first time Snowy changes it (restored on "None").
     pub original_wallpaper: Option<String>,
+    /// Once a day, ask GitHub for the latest release (no other data is sent).
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -67,6 +69,7 @@ impl Default for Settings {
             wallpaper_day_night: true,
             wallpaper_time: "golden".to_string(),
             original_wallpaper: None,
+            check_updates: true,
         }
     }
 }
@@ -120,6 +123,14 @@ mod tests {
         assert!(s.wallpaper_day_night);
         assert_eq!(s.wallpaper_time, "golden");
         assert_eq!(s.original_wallpaper, None);
+        assert!(s.check_updates);
+    }
+
+    #[test]
+    fn check_updates_round_trips() {
+        let s: Settings = serde_json::from_str(r#"{"check_updates": false}"#).unwrap();
+        assert!(!s.check_updates);
+        assert!(Settings::default().check_updates);
     }
 
     #[test]

@@ -15,6 +15,7 @@ snowy-sys.workspace = true
 snowy-settings.workspace = true
 snowy-props.workspace = true
 snowy-weather.workspace = true
+snowy-update.workspace = true
 snowy-wallpaper.workspace = true
 anyhow.workspace = true
 log.workspace = true

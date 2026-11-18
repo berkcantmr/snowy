@@ -178,6 +178,19 @@ pub enum Page {
 impl Page {
     pub const ALL: [Page; 6] = [Page::Effects, Page::Appearance, Page::Desktop, Page::Wallpapers, Page::System, Page::About];
 
+    /// Page for a command-line id such as `--page about`.
+    pub fn from_id(id: &str) -> Option<Page> {
+        Some(match id.to_ascii_lowercase().as_str() {
+            "effects" => Page::Effects,
+            "appearance" => Page::Appearance,
+            "desktop" => Page::Desktop,
+            "wallpapers" => Page::Wallpapers,
+            "system" => Page::System,
+            "about" => Page::About,
+            _ => return None,
+        })
+    }
+
     pub fn label_key(self) -> &'static str {
         match self {
             Page::Effects => "page.effects",
@@ -487,6 +500,9 @@ mod tests {
     fn page_cycle() {
         assert_eq!(Page::ALL.len(), 6);
         assert_eq!(Page::default(), Page::Effects);
+        assert_eq!(Page::from_id("about"), Some(Page::About));
+        assert_eq!(Page::from_id("ABOUT"), Some(Page::About));
+        assert_eq!(Page::from_id("nope"), None);
         for page in Page::ALL {
             assert_ne!(i18n::t("en", page.label_key()), "???");
             assert_ne!(i18n::t("tr", page.label_key()), "???");

@@ -1,0 +1,13 @@
+[package]
+name = "snowy-update"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+snowy-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+sha2 = "0.10"
+ureq = { version = "2", default-features = false, features = ["tls"] }

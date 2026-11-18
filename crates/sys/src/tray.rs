@@ -10,6 +10,8 @@ pub struct TrayState {
     pub paused: bool,
     /// Resolved language code (see `i18n::LANGS`).
     pub lang: String,
+    /// Version (without "v") of a newer release the user can install, if any.
+    pub update: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +26,10 @@ pub enum TrayCommand {
     SendPlough,
     CallYeti,
     OpenSettings,
+    /// Open the settings window on the About page to install the available update.
+    UpdateNow,
+    /// Stop offering the currently available version.
+    SkipUpdate,
     Quit,
 }
 
@@ -38,6 +44,8 @@ const ID_LIGHTS: &str = "snowy.lights";
 const ID_PLOUGH: &str = "snowy.plough";
 const ID_YETI: &str = "snowy.yeti";
 const ID_SETTINGS: &str = "snowy.settings";
+const ID_UPDATE: &str = "snowy.update";
+const ID_SKIP_UPDATE: &str = "snowy.skip_update";
 const ID_QUIT: &str = "snowy.quit";
 const ID_FX_PREFIX: &str = "snowy.fx.";
 const ID_WEATHER: &str = "snowy.weather";
@@ -66,6 +74,8 @@ fn parse_id(id: &str) -> Option<TrayCommand> {
         ID_PLOUGH => TrayCommand::SendPlough,
         ID_YETI => TrayCommand::CallYeti,
         ID_SETTINGS => TrayCommand::OpenSettings,
+        ID_UPDATE => TrayCommand::UpdateNow,
+        ID_SKIP_UPDATE => TrayCommand::SkipUpdate,
         ID_QUIT => TrayCommand::Quit,
         _ => {
             let k = id.strip_prefix(ID_FX_PREFIX)?;
@@ -88,10 +98,23 @@ fn pause_label(state: &TrayState) -> &'static str {
     i18n::t(&state.lang, if state.paused { "menu.resume" } else { "menu.pause" })
 }
 
+fn tooltip(state: &TrayState) -> String {
+    match &state.update {
+        Some(v) => i18n::t(&state.lang, "tray.tooltip_update").replace("{v}", v),
+        None => i18n::t(&state.lang, "tray.tooltip").to_string(),
+    }
+}
+
 fn build_items(state: &TrayState) -> Result<Items> {
     let lang = state.lang.as_str();
     let menu = Menu::new();
     let mut choices = Vec::new();
+    if let Some(v) = &state.update {
+        let label = i18n::t(lang, "menu.update_available").replace("{v}", v);
+        menu.append(&MenuItem::with_id(MenuId::new(ID_UPDATE), label, true, None))?;
+        menu.append(&MenuItem::with_id(MenuId::new(ID_SKIP_UPDATE), i18n::t(lang, "menu.skip_update"), true, None))?;
+        menu.append(&PredefinedMenuItem::separator())?;
+    }
     let mk = |choice: EffectChoice, key: &str| {
         CheckMenuItem::with_id(MenuId::new(choice_id(choice)), i18n::t(lang, key), true, false, None)
     };
@@ -155,7 +178,7 @@ impl Tray {
         sync_checks(&items, state.effect);
         let icon = TrayIconBuilder::new()
             .with_icon(make_icon()?)
-            .with_tooltip(i18n::t(&state.lang, "tray.tooltip"))
+            .with_tooltip(tooltip(state))
             .with_menu(Box::new(items.menu.clone()))
             .with_menu_on_left_click(false)
             .build()
@@ -165,11 +188,11 @@ impl Tray {
 
     /// Rebuild/refresh menu check marks and labels.
     pub fn update(&mut self, state: &TrayState) {
-        if state.lang != self.state.lang {
+        if state.lang != self.state.lang || state.update != self.state.update {
             match build_items(state) {
                 Ok(items) => {
                     self.icon.set_menu(Some(Box::new(items.menu.clone())));
-                    let _ = self.icon.set_tooltip(Some(i18n::t(&state.lang, "tray.tooltip")));
+                    let _ = self.icon.set_tooltip(Some(tooltip(state)));
                     self.items = items;
                 }
                 Err(e) => log::warn!("tray menu rebuild failed: {e}"),
@@ -220,5 +243,21 @@ mod tests {
         for c in all {
             assert_eq!(parse_id(&choice_id(c)), Some(TrayCommand::SetEffect(c)));
         }
+    }
+
+    #[test]
+    fn update_ids_roundtrip() {
+        assert_eq!(parse_id(ID_UPDATE), Some(TrayCommand::UpdateNow));
+        assert_eq!(parse_id(ID_SKIP_UPDATE), Some(TrayCommand::SkipUpdate));
+        assert_eq!(parse_id(ID_QUIT), Some(TrayCommand::Quit));
+        assert_eq!(parse_id("snowy.update.x"), None);
+    }
+
+    #[test]
+    fn tooltip_mentions_version() {
+        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None };
+        assert_eq!(tooltip(&st), "Snowy");
+        st.update = Some("1.2.3".into());
+        assert!(tooltip(&st).contains("1.2.3"));
     }
 }
