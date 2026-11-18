@@ -62,6 +62,9 @@ graphics adapter it uses and any errors; it contains no personal data, so you ca
 to a bug report. If the GPU path fails, Snowy falls back to Windows' software renderer (WARP)
 by itself; setting the environment variable `SNOWY_RENDERER=warp` forces that.
 
+On laptops with two GPUs Snowy draws on the power-saving one (usually the integrated
+graphics), so the discrete GPU can stay asleep. `SNOWY_GPU=performance` picks the fast one.
+
 ## Privacy
 
 Snowy works fully offline by default. Two features use the network. "Match my weather"

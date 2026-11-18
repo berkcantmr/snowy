@@ -59,13 +59,39 @@ struct Device {
     targets: (PCSTR, PCSTR),
 }
 
+/// The hardware adapter to render on. Snowy's sprites are light work, so on laptops with two
+/// GPUs it asks for the power-saving one (integrated graphics) instead of whatever Windows
+/// treats as the default, which may wake the discrete GPU and cost battery.
+/// `SNOWY_GPU=performance` asks for the fast one instead. `None` = let Windows pick (no
+/// IDXGIFactory6 before Windows 10 1803, or no hardware adapter found).
+fn pick_adapter() -> Option<IDXGIAdapter> {
+    let pref = match std::env::var("SNOWY_GPU") {
+        Ok(v) if v.eq_ignore_ascii_case("performance") => DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+        _ => DXGI_GPU_PREFERENCE_MINIMUM_POWER,
+    };
+    unsafe {
+        let factory: IDXGIFactory6 = CreateDXGIFactory1().ok()?;
+        (0..).map_while(|i| factory.EnumAdapterByGpuPreference::<IDXGIAdapter1>(i, pref).ok()).find_map(|a| {
+            let desc = a.GetDesc1().ok()?;
+            // Skip the Microsoft Basic Render Driver; WARP is the separate fallback.
+            if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+                return None;
+            }
+            a.cast::<IDXGIAdapter>().ok()
+        })
+    }
+}
+
 fn create_device(driver: D3D_DRIVER_TYPE) -> Result<Device> {
     let mut device = None;
     let mut ctx = None;
     let mut level = D3D_FEATURE_LEVEL::default();
+    // An explicit adapter needs D3D_DRIVER_TYPE_UNKNOWN.
+    let adapter = if driver == D3D_DRIVER_TYPE_HARDWARE { pick_adapter() } else { None };
+    let driver = if adapter.is_some() { D3D_DRIVER_TYPE_UNKNOWN } else { driver };
     unsafe {
         D3D11CreateDevice(
-            None,
+            adapter.as_ref(),
             driver,
             HMODULE::default(),
             D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -441,5 +467,18 @@ impl Drop for Renderer {
             self.ctx.ClearState();
             self.ctx.Flush();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Prints the chosen adapter (`cargo test -p snowy-gfx -- --nocapture`); on a PC with two
+    /// GPUs this should be the integrated one unless SNOWY_GPU=performance.
+    #[test]
+    fn hardware_device_uses_power_saving_adapter() {
+        let Ok(d) = create_device(D3D_DRIVER_TYPE_HARDWARE) else { return };
+        println!("adapter: {}", describe(&d.device));
     }
 }
