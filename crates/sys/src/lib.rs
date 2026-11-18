@@ -21,3 +21,6 @@ pub use scene::{pointer_sample, scan_surfaces, RawPointer};
 
 mod grab;
 pub use grab::{MouseGrab, ScreenRect};
+
+mod desktop_icons;
+pub use desktop_icons::{query_desktop_icons, DesktopIcons};
