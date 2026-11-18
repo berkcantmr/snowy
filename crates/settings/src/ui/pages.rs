@@ -213,6 +213,9 @@ impl SettingsApp {
                 true,
             );
         });
+        // Same update state as the About page; checking here is manual only.
+        let ctx = ui.ctx().clone();
+        self.update_card(ui, &ctx);
 
         card(ui, &pal, |ui| {
             ui.label(RichText::new(i18n::t(lang, "settings.monitors")).semi());
