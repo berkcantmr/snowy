@@ -231,6 +231,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"バッテリー駆動中のため一時停止中",
         "tray.paused_fullscreen" => r"全画面アプリの実行中は一時停止中",
         "tray.no_renderer" => r"描画を開始できません。詳細: %APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "編集モード",
+        "toast.locked" => "デスクトップアイコンの近くにあるためロックされています。移動するには編集モードをオンに:",
+        "toast.edit_on" => "編集モードがオン：アイコンの近くでも移動できます。オフにするには:",
+        "toast.edit_off" => "編集モードがオフになりました。アイコン近くのオブジェクトは再びロックされます。",
         _ => return None,
     })
 }

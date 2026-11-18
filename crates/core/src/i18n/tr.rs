@@ -231,6 +231,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"Pilde çalışırken duraklatıldı",
         "tray.paused_fullscreen" => r"Tam ekran uygulama açıkken duraklatıldı",
         "tray.no_renderer" => r"Bu bilgisayarda çizim başlatılamadı. Ayrıntılar: %APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "Düzenleme modu",
+        "toast.locked" => "Bu nesne masaüstü simgelerine yakın olduğu için kilitli. Taşımak için düzenleme modunu aç:",
+        "toast.edit_on" => "Düzenleme modu açık: nesneler simgelerin yanında da taşınabilir. Kapatmak için:",
+        "toast.edit_off" => "Düzenleme modu kapalı. Simgelere yakın nesneler yeniden kilitlendi.",
         _ => return None,
     })
 }

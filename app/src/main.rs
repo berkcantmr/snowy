@@ -58,7 +58,19 @@ struct App {
     /// Version currently offered in the tray menu.
     update_shown: Option<String>,
     wallpaper: WallpaperState,
+    /// Edit mode: props next to desktop icons can be moved (toggled by shortcut or tray).
+    edit_mode: bool,
+    /// Last activity in edit mode (it turns itself off after `EDIT_IDLE`).
+    edit_active: Instant,
+    hotkey: Option<snowy_sys::EditHotkey>,
+    desktop_icons: snowy_sys::DesktopIcons,
+    toast: Option<snowy_sys::Toast>,
+    /// Last "locked" hint, so holding the mouse doesn't re-show it every press.
+    last_hint: Option<Instant>,
 }
+
+/// Edit mode turns itself off after this long without mouse presses.
+const EDIT_IDLE: Duration = Duration::from_secs(5 * 60);
 
 type WpKey = (snowy_wallpaper::Theme, snowy_wallpaper::TimeOfDay, u32, u32);
 
@@ -101,7 +113,7 @@ fn main() -> anyhow::Result<()> {
     sync_autostart(settings.start_with_windows);
     let lang = lang_of(&settings);
     log_startup(&settings);
-    let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang, update: None, notice: None })?;
+    let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang, update: None, notice: None, edit_mode: false })?;
 
     let mut app = App {
         settings_mtime: mtime(),
@@ -123,7 +135,17 @@ fn main() -> anyhow::Result<()> {
         update: settings.check_updates.then(snowy_update::UpdateWatch::start),
         update_shown: None,
         wallpaper: WallpaperState::default(),
+        edit_mode: false,
+        edit_active: Instant::now(),
+        hotkey: snowy_sys::EditHotkey::register(),
+        desktop_icons: snowy_sys::DesktopIcons::start(),
+        toast: snowy_sys::Toast::new().map_err(|e| log::warn!("toast: {e:#}")).ok(),
+        last_hint: None,
     };
+    match &app.hotkey {
+        Some(h) => log::info!("edit mode shortcut: {:?}", h.combo),
+        None => log::warn!("no edit mode shortcut could be registered"),
+    }
     app.rebuild_screens();
     app.resolve_effect(true);
 
@@ -143,6 +165,12 @@ fn main() -> anyhow::Result<()> {
             if !app.handle(cmd) {
                 return Ok(());
             }
+        }
+        if app.hotkey.as_ref().is_some_and(|h| h.take_presses() % 2 == 1) {
+            app.set_edit_mode(!app.edit_mode);
+        }
+        if let Some(t) = &mut app.toast {
+            t.tick();
         }
 
         // Once per second: settings file, monitors, pause conditions, random rotation.
@@ -180,6 +208,10 @@ fn main() -> anyhow::Result<()> {
             }
             app.resolve_effect(false);
             app.tick_wallpaper();
+            app.sync_desktop_icons();
+            if app.edit_mode && app.edit_active.elapsed() >= EDIT_IDLE {
+                app.set_edit_mode(false);
+            }
         }
 
         let now = Instant::now();
@@ -196,7 +228,11 @@ fn main() -> anyhow::Result<()> {
             last_scan = Instant::now();
             app.scan_surfaces();
         }
-        let mut raw = if running { snowy_sys::pointer_sample() } else { None };
+        // Props stay interactive while the weather is paused or off.
+        let mut raw = if running || props_running { snowy_sys::pointer_sample() } else { None };
+        if raw.is_some_and(|r| r.down) {
+            app.edit_active = Instant::now();
+        }
         // A swallowed press never reaches the system's key state, so ask the hook too.
         if let (Some(r), Some(g)) = (raw.as_mut(), app.grab.as_ref()) {
             r.down |= g.captured();
@@ -300,6 +336,7 @@ impl App {
                     s.props.call_yeti();
                 }
             }
+            TrayCommand::ToggleEditMode => self.set_edit_mode(!self.edit_mode),
             TrayCommand::OpenSettings => open_settings(None),
             TrayCommand::UpdateNow => open_settings(Some("about")),
             TrayCommand::SkipUpdate => {
@@ -308,7 +345,10 @@ impl App {
                 }
                 self.refresh_tray();
             }
-            TrayCommand::Quit => return false,
+            TrayCommand::Quit => {
+                close_children();
+                return false;
+            }
         }
         true
     }
@@ -460,7 +500,8 @@ impl App {
                         .map_err(|e| log::warn!("props overlay for {} failed: {e:#}", m.id))
                         .ok();
                     let (w, h) = overlay.size();
-                    let props = Layer::new(&m, w as f32, h as f32, ground_y(&m));
+                    let mut props = Layer::new(&m, w as f32, h as f32, ground_y(&m));
+                    props.set_edit_mode(self.edit_mode);
                     self.screens.push(Screen {
                         monitor: m,
                         overlay,
@@ -554,6 +595,7 @@ impl App {
     fn update_props(&mut self, dt: f32, env: &Env, running: bool) {
         let mut events: Vec<WorldEvent> = Vec::new();
         let mut actions: Vec<Action> = Vec::new();
+        let mut hints: Vec<(i32, i32)> = Vec::new();
         for s in &mut self.screens {
             events.clear();
             if let Some(e) = &mut s.effect {
@@ -582,6 +624,10 @@ impl App {
             s.props.take_actions(&mut actions);
             for a in actions.drain(..) {
                 match a {
+                    Action::LockedHint { pos } => {
+                        let (mx, my, _, _) = s.monitor.rect;
+                        hints.push((mx + pos[0] as i32, my + pos[1] as i32));
+                    }
                     Action::OpenEditor { prop_id } => open_editor(&s.monitor.id, prop_id),
                     Action::ClearGround { x0, x1 } => {
                         if let Some(e) = &mut s.effect {
@@ -590,6 +636,80 @@ impl App {
                     }
                 }
             }
+        }
+        if let Some(&pt) = hints.last() {
+            self.show_locked_hint(pt);
+        }
+    }
+
+    /// Toggle edit mode on every screen, with a short notice showing the shortcut.
+    fn set_edit_mode(&mut self, on: bool) {
+        if self.edit_mode == on {
+            return;
+        }
+        log::info!("edit mode {}", if on { "on" } else { "off" });
+        self.edit_mode = on;
+        self.edit_active = Instant::now();
+        for s in &mut self.screens {
+            s.props.set_edit_mode(on);
+        }
+        let lang = lang_of(&self.settings);
+        let keys = self.shortcut_keys();
+        if let Some(t) = &mut self.toast {
+            if on {
+                t.show(snowy_sys::ToastIcon::EditOn, i18n::t(&lang, "toast.edit_on"), &keys, None);
+            } else {
+                t.show(snowy_sys::ToastIcon::EditOff, i18n::t(&lang, "toast.edit_off"), &[], None);
+            }
+        }
+        self.refresh_tray();
+    }
+
+    /// The press at `pt` (screen px) hit a prop locked next to desktop icons.
+    fn show_locked_hint(&mut self, pt: (i32, i32)) {
+        if self.last_hint.is_some_and(|t| t.elapsed() < Duration::from_millis(1500))
+            && self.toast.as_ref().is_some_and(|t| t.is_visible())
+        {
+            return;
+        }
+        self.last_hint = Some(Instant::now());
+        let lang = lang_of(&self.settings);
+        let keys = self.shortcut_keys();
+        if let Some(t) = &mut self.toast {
+            t.show(snowy_sys::ToastIcon::Lock, i18n::t(&lang, "toast.locked"), &keys, Some(pt));
+        }
+    }
+
+    /// The registered shortcut as keycaps (empty if none could be registered; the tray
+    /// menu item still works).
+    fn shortcut_keys(&self) -> Vec<snowy_sys::Key> {
+        use snowy_sys::Key;
+        let Some(h) = &self.hotkey else { return Vec::new() };
+        let c = h.combo;
+        let mut keys = Vec::new();
+        for (on, k) in [(c.win, Key::Win), (c.ctrl, Key::Ctrl), (c.alt, Key::Alt), (c.shift, Key::Shift)] {
+            if on {
+                keys.push(k);
+            }
+        }
+        keys.push(Key::Char(c.key));
+        keys
+    }
+
+    /// Hand the desktop icon boxes to each screen's props (in that overlay's coordinates).
+    fn sync_desktop_icons(&mut self) {
+        let rects = self.desktop_icons.rects();
+        let mut local = Vec::new();
+        for s in &mut self.screens {
+            let (mx, my, w, h) = s.monitor.rect;
+            local.clear();
+            local.extend(
+                rects
+                    .iter()
+                    .filter(|r| r.2 > mx && r.0 < mx + w && r.3 > my && r.1 < my + h)
+                    .map(|r| [(r.0 - mx) as f32, (r.1 - my) as f32, (r.2 - mx) as f32, (r.3 - my) as f32]),
+            );
+            s.props.set_desktop_icons(&local);
         }
     }
 
@@ -633,6 +753,7 @@ impl App {
             lang: lang_of(&self.settings),
             update: self.update_shown.clone(),
             notice: if self.no_renderer { Some("tray.no_renderer") } else { self.pause_reason },
+            edit_mode: self.edit_mode,
         };
         self.tray.update(&state);
     }
@@ -919,9 +1040,46 @@ fn mtime() -> Option<SystemTime> {
     std::fs::metadata(Settings::path()).and_then(|m| m.modified()).ok()
 }
 
+/// Settings and look-editor windows this process opened; closed with the app on Quit.
+static CHILDREN: std::sync::Mutex<Vec<std::process::Child>> = std::sync::Mutex::new(Vec::new());
+
+fn spawn_child(cmd: &mut std::process::Command) {
+    match cmd.spawn() {
+        Ok(child) => {
+            if let Ok(mut c) = CHILDREN.lock() {
+                // Forget windows the user already closed.
+                c.retain_mut(|ch| matches!(ch.try_wait(), Ok(None)));
+                c.push(child);
+            }
+        }
+        Err(e) => log::warn!("could not open window: {e}"),
+    }
+}
+
+/// Closes the windows opened by this process: politely first (like clicking X, so the
+/// editor/settings finish saving), then by force after a short grace period.
+fn close_children() {
+    let Ok(mut children) = CHILDREN.lock() else { return };
+    children.retain_mut(|ch| matches!(ch.try_wait(), Ok(None)));
+    for ch in children.iter() {
+        snowy_sys::close_process_windows(ch.id());
+    }
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while !children.is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+        children.retain_mut(|ch| matches!(ch.try_wait(), Ok(None)));
+    }
+    for ch in children.iter_mut() {
+        log::warn!("window process {} did not close; ending it", ch.id());
+        let _ = ch.kill();
+        let _ = ch.wait();
+    }
+    children.clear();
+}
+
 fn open_editor(monitor_id: &str, prop_id: u64) {
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe).arg("--edit").arg(monitor_id).arg(prop_id.to_string()).spawn();
+        spawn_child(std::process::Command::new(exe).arg("--edit").arg(monitor_id).arg(prop_id.to_string()));
     }
 }
 
@@ -932,7 +1090,7 @@ fn open_settings(page: Option<&str>) {
         if let Some(p) = page {
             cmd.arg("--page").arg(p);
         }
-        let _ = cmd.spawn();
+        spawn_child(&mut cmd);
     }
 }
 

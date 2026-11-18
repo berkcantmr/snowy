@@ -231,6 +231,10 @@ pub const KEYS: &[&str] = &[
     "tray.paused_battery",
     "tray.paused_fullscreen",
     "tray.no_renderer",
+    "menu.edit_mode",
+    "toast.locked",
+    "toast.edit_on",
+    "toast.edit_off",
 ];
 
 pub fn get(key: &str) -> Option<&'static str> {
@@ -464,6 +468,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"Paused while on battery",
         "tray.paused_fullscreen" => r"Paused while a fullscreen app is open",
         "tray.no_renderer" => r"Can't draw on this PC. Details: %APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "Edit mode",
+        "toast.locked" => "This one is next to desktop icons, so it is locked. Turn on edit mode to move it:",
+        "toast.edit_on" => "Edit mode is on: everything can be moved, even next to icons. Turn it off with:",
+        "toast.edit_off" => "Edit mode is off. Things next to icons are locked again.",
         _ => return None,
     })
 }

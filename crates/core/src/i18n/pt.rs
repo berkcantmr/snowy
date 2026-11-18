@@ -231,6 +231,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"Pausado enquanto estiver na bateria",
         "tray.paused_fullscreen" => r"Pausado enquanto um app em tela cheia estiver aberto",
         "tray.no_renderer" => r"Não foi possível desenhar. Detalhes: %APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "Modo de edição",
+        "toast.locked" => "Este objeto está perto de ícones da área de trabalho e está bloqueado. Ative o modo de edição para movê-lo:",
+        "toast.edit_on" => "Modo de edição ativado: tudo pode ser movido, mesmo perto dos ícones. Para desativar:",
+        "toast.edit_off" => "Modo de edição desativado. Objetos perto dos ícones estão bloqueados de novo.",
         _ => return None,
     })
 }

@@ -231,6 +231,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"Pausiert im Akkubetrieb",
         "tray.paused_fullscreen" => r"Pausiert, solange eine Vollbild-App läuft",
         "tray.no_renderer" => r"Zeichnen nicht möglich. Details: %APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "Bearbeitungsmodus",
+        "toast.locked" => "Dieses Objekt liegt neben Desktopsymbolen und ist gesperrt. Zum Verschieben den Bearbeitungsmodus einschalten:",
+        "toast.edit_on" => "Bearbeitungsmodus an: Alles lässt sich verschieben, auch neben Symbolen. Ausschalten mit:",
+        "toast.edit_off" => "Bearbeitungsmodus aus. Objekte neben Symbolen sind wieder gesperrt.",
         _ => return None,
     })
 }

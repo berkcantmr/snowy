@@ -15,6 +15,8 @@ pub struct TrayState {
     /// Why nothing is drawn right now (an i18n key such as "tray.paused_battery"), shown in
     /// the tooltip so an automatic pause never looks like a broken app.
     pub notice: Option<&'static str>,
+    /// Edit mode (props next to desktop icons can be moved).
+    pub edit_mode: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +30,7 @@ pub enum TrayCommand {
     AddLights,
     SendPlough,
     CallYeti,
+    ToggleEditMode,
     OpenSettings,
     /// Open the settings window on the About page to install the available update.
     UpdateNow,
@@ -46,6 +49,7 @@ const ID_TREE: &str = "snowy.tree";
 const ID_LIGHTS: &str = "snowy.lights";
 const ID_PLOUGH: &str = "snowy.plough";
 const ID_YETI: &str = "snowy.yeti";
+const ID_EDIT: &str = "snowy.edit";
 const ID_SETTINGS: &str = "snowy.settings";
 const ID_UPDATE: &str = "snowy.update";
 const ID_SKIP_UPDATE: &str = "snowy.skip_update";
@@ -76,6 +80,7 @@ fn parse_id(id: &str) -> Option<TrayCommand> {
         ID_LIGHTS => TrayCommand::AddLights,
         ID_PLOUGH => TrayCommand::SendPlough,
         ID_YETI => TrayCommand::CallYeti,
+        ID_EDIT => TrayCommand::ToggleEditMode,
         ID_SETTINGS => TrayCommand::OpenSettings,
         ID_UPDATE => TrayCommand::UpdateNow,
         ID_SKIP_UPDATE => TrayCommand::SkipUpdate,
@@ -93,6 +98,7 @@ struct Items {
     /// Every effect-choice check item with its choice.
     choices: Vec<(EffectChoice, CheckMenuItem)>,
     pause: MenuItem,
+    edit: CheckMenuItem,
     settings: MenuItem,
     quit: MenuItem,
 }
@@ -152,6 +158,8 @@ fn build_items(state: &TrayState) -> Result<Items> {
     menu.append(&MenuItem::with_id(MenuId::new(ID_PLOUGH), i18n::t(lang, "menu.send_plough"), true, None))?;
     menu.append(&MenuItem::with_id(MenuId::new(ID_YETI), i18n::t(lang, "menu.call_yeti"), true, None))?;
     menu.append(&MenuItem::with_id(MenuId::new(ID_CLEAR), i18n::t(lang, "menu.clear_snow"), true, None))?;
+    let edit = CheckMenuItem::with_id(MenuId::new(ID_EDIT), i18n::t(lang, "menu.edit_mode"), true, state.edit_mode, None);
+    menu.append(&edit)?;
     menu.append(&PredefinedMenuItem::separator())?;
     let settings =
         MenuItem::with_id(MenuId::new(ID_SETTINGS), i18n::t(lang, "menu.settings"), true, None);
@@ -159,7 +167,7 @@ fn build_items(state: &TrayState) -> Result<Items> {
     menu.append(&PredefinedMenuItem::separator())?;
     let quit = MenuItem::with_id(MenuId::new(ID_QUIT), i18n::t(lang, "menu.quit"), true, None);
     menu.append(&quit)?;
-    Ok(Items { menu, choices, pause, settings, quit })
+    Ok(Items { menu, choices, pause, edit, settings, quit })
 }
 
 fn sync_checks(items: &Items, effect: EffectChoice) {
@@ -214,6 +222,8 @@ impl Tray {
             let _ = self.icon.set_tooltip(Some(tooltip(state)));
         }
         sync_checks(&self.items, state.effect);
+        self.items.edit.set_checked(state.edit_mode);
+        self.items.edit.set_text(i18n::t(&state.lang, "menu.edit_mode"));
         self.state = state.clone();
     }
 
@@ -226,6 +236,8 @@ impl Tray {
                     self.state.effect = *c;
                 }
                 sync_checks(&self.items, self.state.effect);
+                // The app decides; keep the check mark in step with its state.
+                self.items.edit.set_checked(self.state.edit_mode);
                 return Some(cmd);
             }
         }
@@ -261,12 +273,13 @@ mod tests {
         assert_eq!(parse_id(ID_UPDATE), Some(TrayCommand::UpdateNow));
         assert_eq!(parse_id(ID_SKIP_UPDATE), Some(TrayCommand::SkipUpdate));
         assert_eq!(parse_id(ID_QUIT), Some(TrayCommand::Quit));
+        assert_eq!(parse_id(ID_EDIT), Some(TrayCommand::ToggleEditMode));
         assert_eq!(parse_id("snowy.update.x"), None);
     }
 
     #[test]
     fn tooltip_mentions_version() {
-        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None, notice: None };
+        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None, notice: None, edit_mode: false };
         assert_eq!(tooltip(&st), "Snowy");
         st.update = Some("1.2.3".into());
         assert!(tooltip(&st).contains("1.2.3"));
@@ -274,7 +287,7 @@ mod tests {
 
     #[test]
     fn tooltip_explains_automatic_pause() {
-        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None, notice: None };
+        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None, notice: None, edit_mode: false };
         st.notice = Some("tray.paused_battery");
         let tip = tooltip(&st);
         assert!(tip.starts_with("Snowy\n") && tip.contains("battery"), "{tip}");

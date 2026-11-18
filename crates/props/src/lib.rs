@@ -19,6 +19,9 @@ pub enum Action {
     /// The plough cleared ground between x0..x1 this frame: forward to the weather effect's
     /// `clear_region` on the same monitor.
     ClearGround { x0: f32, x1: f32 },
+    /// The user pressed a prop that is locked because it sits next to desktop icons (outside
+    /// edit mode). The app explains how to turn edit mode on. `pos` = overlay-local press point.
+    LockedHint { pos: [f32; 2] },
 }
 
 const SNOWMAN_H: f32 = 150.0;
@@ -44,6 +47,12 @@ const CONFETTI_MAX: usize = 80;
 /// String lights: sag as a fraction of the string length, grab radius of the end handles.
 const LIGHTS_SAG: f32 = 0.06;
 const END_GRAB: f32 = 16.0;
+/// Light ends closer than this (px at scale 1) snap together.
+const END_SNAP: f32 = 22.0;
+/// Ends this close count as joined (they move together when one is dragged).
+const END_JOINED: f32 = 1.5;
+/// A prop whose grab area comes this close to a desktop icon is locked outside edit mode.
+const ICON_MARGIN: f32 = 6.0;
 
 /// Days since 1970-01-01 of a civil date.
 fn days_from_civil(y: i32, m: u32, d: u32) -> u32 {
@@ -211,6 +220,8 @@ struct Press {
     t: f32,
     dragging: bool,
     off: f32,
+    /// Ends of other strings joined to the grabbed end: (prop id, is end A).
+    linked: Vec<(u64, bool)>,
 }
 
 struct Plough {
@@ -254,6 +265,16 @@ pub struct Layer {
     /// Test hook: pretend today is this day.
     day_override: Option<u32>,
     confetti: Vec<Particle>,
+    /// Desktop icon boxes (overlay-local px).
+    icons: Vec<[f32; 4]>,
+    /// Edit mode: props next to desktop icons can be moved too.
+    edit_mode: bool,
+    /// Per prop index: next to an icon and not in edit mode, so clicks go to the desktop.
+    locked: Vec<bool>,
+}
+
+fn overlaps(a: &[f32; 4], b: &[f32; 4], m: f32) -> bool {
+    a[0] - m < b[2] && b[0] < a[2] + m && a[1] - m < b[3] && b[1] < a[3] + m
 }
 
 fn is_snowman(p: &Prop) -> bool {
@@ -329,6 +350,9 @@ impl Layer {
             day_check: 0.0,
             day_override: None,
             confetti: Vec::new(),
+            icons: Vec::new(),
+            edit_mode: false,
+            locked: Vec::new(),
         };
         l.sync_trans();
         l.rebuild();
@@ -437,6 +461,28 @@ impl Layer {
         }
         self.sync_trans();
         self.rebuild();
+    }
+
+    /// Desktop icon boxes in overlay-local px (props next to them lock outside edit mode).
+    pub fn set_desktop_icons(&mut self, icons: &[[f32; 4]]) {
+        if self.icons != icons {
+            self.icons.clear();
+            self.icons.extend_from_slice(icons);
+            self.rebuild();
+        }
+    }
+
+    /// Edit mode: every prop can be dragged, even next to desktop icons.
+    pub fn set_edit_mode(&mut self, on: bool) {
+        if self.edit_mode != on {
+            self.edit_mode = on;
+            self.rebuild();
+        }
+    }
+
+    /// True when some prop is locked because it is next to desktop icons.
+    pub fn has_locked(&self) -> bool {
+        self.locked.iter().any(|&l| l)
     }
 
     /// Drain pending actions.
@@ -808,6 +854,134 @@ impl Layer {
         (ap, bp, sag)
     }
 
+    /// Which props sit next to desktop icons (locked unless in edit mode).
+    fn update_locks(&mut self) {
+        let n = self.file.props.len();
+        self.locked.clear();
+        self.locked.resize(n, false);
+        if self.edit_mode || self.icons.is_empty() {
+            return;
+        }
+        let m = ICON_MARGIN * self.sc();
+        let icons = &self.icons;
+        let near = |z: &[f32; 4]| z[2] > z[0] && icons.iter().any(|ic| overlaps(z, ic, m));
+        for (i, z) in self.zones.iter().enumerate() {
+            if near(z) {
+                self.locked[i] = true;
+            }
+        }
+        for (i, _, z) in &self.lzones {
+            if near(z) {
+                self.locked[*i] = true;
+            }
+        }
+        // A prop being dragged stays movable until it is let go.
+        if let Some(pr) = self.press.as_ref().filter(|p| p.dragging) {
+            if let Some(i) = self.file.props.iter().position(|p| p.id == pr.id) {
+                self.locked[i] = false;
+            }
+        }
+    }
+
+    /// Ends of other light strings (px): (prop id, is end A, position).
+    fn other_ends(&self, id: u64) -> Vec<(u64, bool, [f32; 2])> {
+        let mut v = Vec::new();
+        for p in &self.file.props {
+            if let (PropKind::Lights { a, b, .. }, true) = (p.kind, p.id != id) {
+                v.push((p.id, true, [a[0] * self.width, a[1] * self.height]));
+                v.push((p.id, false, [b[0] * self.width, b[1] * self.height]));
+            }
+        }
+        v
+    }
+
+    /// Other strings' ends sitting on the end `end` (fractions) of string `id`.
+    fn joined_ends(&self, id: u64, end: [f32; 2]) -> Vec<(u64, bool)> {
+        let e = [end[0] * self.width, end[1] * self.height];
+        self.other_ends(id)
+            .into_iter()
+            .filter(|(_, _, q)| (q[0] - e[0]).hypot(q[1] - e[1]) <= END_JOINED)
+            .map(|(pid, is_a, _)| (pid, is_a))
+            .collect()
+    }
+
+    /// Drags string `id` by `d` (fractions of the screen) from its `orig` ends. Ends snap
+    /// onto nearby ends of other strings; `linked` ends follow a dragged end (a joint).
+    fn drag_lights(&mut self, id: u64, part: Part, orig: [[f32; 2]; 2], d: [f32; 2], linked: &[(u64, bool)]) {
+        let (w, h) = (self.width.max(1.0), self.height.max(1.0));
+        let snap = END_SNAP * self.sc();
+        let others: Vec<[f32; 2]> = self
+            .other_ends(id)
+            .into_iter()
+            .filter(|(pid, is_a, _)| !linked.contains(&(*pid, *is_a)))
+            .map(|(_, _, q)| q)
+            .collect();
+        // Closest other end within the snap radius of `p` (px): (distance, position).
+        let nearest = |p: [f32; 2]| {
+            others
+                .iter()
+                .map(|q| ((q[0] - p[0]).hypot(q[1] - p[1]), *q))
+                .filter(|(dist, _)| *dist <= snap)
+                .min_by(|x, y| x.0.total_cmp(&y.0))
+        };
+        let c = |v: f32| v.clamp(0.0, 1.0);
+        let (mut na, mut nb) = (orig[0], orig[1]);
+        match part {
+            Part::Move => {
+                let lim = |k: usize, dk: f32| {
+                    let (lo, hi) = (orig[0][k].min(orig[1][k]), orig[0][k].max(orig[1][k]));
+                    dk.clamp(-lo, 1.0 - hi)
+                };
+                let (mut dx, mut dy) = (lim(0, d[0]), lim(1, d[1]));
+                // Snap whichever of our ends is closest to another string's end.
+                let best = [orig[0], orig[1]]
+                    .iter()
+                    .filter_map(|e| {
+                        let p = [(e[0] + dx) * w, (e[1] + dy) * h];
+                        nearest(p).map(|(dist, q)| (dist, [(q[0] - p[0]) / w, (q[1] - p[1]) / h]))
+                    })
+                    .min_by(|x, y| x.0.total_cmp(&y.0));
+                if let Some((_, off)) = best {
+                    dx = lim(0, dx + off[0]);
+                    dy = lim(1, dy + off[1]);
+                }
+                na = [orig[0][0] + dx, orig[0][1] + dy];
+                nb = [orig[1][0] + dx, orig[1][1] + dy];
+            }
+            Part::EndA | Part::EndB => {
+                let o = if part == Part::EndA { orig[0] } else { orig[1] };
+                let mut e = [c(o[0] + d[0]), c(o[1] + d[1])];
+                if let Some((_, q)) = nearest([e[0] * w, e[1] * h]) {
+                    e = [c(q[0] / w), c(q[1] / h)];
+                }
+                if part == Part::EndA {
+                    na = e;
+                } else {
+                    nb = e;
+                }
+            }
+        }
+        let moved_end = match part {
+            Part::EndA => Some(na),
+            Part::EndB => Some(nb),
+            Part::Move => None,
+        };
+        for p in &mut self.file.props {
+            let PropKind::Lights { a, b, .. } = &mut p.kind else { continue };
+            if p.id == id {
+                *a = na;
+                *b = nb;
+            } else if let Some(e) = moved_end {
+                if linked.contains(&(p.id, true)) {
+                    *a = e;
+                }
+                if linked.contains(&(p.id, false)) {
+                    *b = e;
+                }
+            }
+        }
+    }
+
     fn rebuild(&mut self) {
         self.inst.clear();
         let n = self.file.props.len();
@@ -883,6 +1057,7 @@ impl Layer {
             self.zones[i] = [b[0] - ZONE_PAD, b[1] - ZONE_PAD, b[2] + ZONE_PAD, b[3] + ZONE_PAD];
             self.inst.extend(scratch.iter().map(snowy_art::to_instance));
         }
+        self.update_locks();
         self.yeti_zone = None;
         self.gift_zone = None;
         if let Some(d) = &self.drop {
@@ -1008,7 +1183,9 @@ impl Effect for Layer {
 
         // Press / drag / release.
         if down && !self.prev_down {
-            if let Some(p) = ptr {
+            // Only presses on the bare desktop: a click into a window in front of a prop
+            // belongs to that window.
+            if let Some(p) = ptr.filter(|p| p.over_desktop) {
                 let inside = |z: Option<[f32; 4]>| z.is_some_and(|z| p.pos[0] >= z[0] && p.pos[0] <= z[2] && p.pos[1] >= z[1] && p.pos[1] <= z[3]);
                 if inside(self.yeti_zone) {
                     self.scare_yeti();
@@ -1018,12 +1195,26 @@ impl Effect for Layer {
                         g.t = 0.0;
                     }
                 } else if let Some((i, part)) = self.hit_part(p.pos) {
-                    let pr = self.file.props[i];
-                    let orig = match pr.kind {
-                        PropKind::Lights { a, b, .. } => [a, b],
-                        _ => [[0.0; 2]; 2],
-                    };
-                    self.press = Some(Press { part, orig, id: pr.id, start: p.pos, t: 0.0, dragging: false, off: pr.x * self.width - p.pos[0] });
+                    if self.locked.get(i).copied().unwrap_or(false) {
+                        // The press belongs to the desktop (icons stay usable); only explain
+                        // when it didn't land on an icon itself.
+                        let on_icon = self.icons.iter().any(|z| p.pos[0] >= z[0] && p.pos[0] < z[2] && p.pos[1] >= z[1] && p.pos[1] < z[3]);
+                        if !on_icon {
+                            self.actions.push(Action::LockedHint { pos: p.pos });
+                        }
+                    } else {
+                        let pr = self.file.props[i];
+                        let orig = match pr.kind {
+                            PropKind::Lights { a, b, .. } => [a, b],
+                            _ => [[0.0; 2]; 2],
+                        };
+                        let linked = match part {
+                            Part::EndA => self.joined_ends(pr.id, orig[0]),
+                            Part::EndB => self.joined_ends(pr.id, orig[1]),
+                            Part::Move => Vec::new(),
+                        };
+                        self.press = Some(Press { part, orig, id: pr.id, start: p.pos, t: 0.0, dragging: false, off: pr.x * self.width - p.pos[0], linked });
+                    }
                 }
             }
         } else if down {
@@ -1037,28 +1228,17 @@ impl Effect for Layer {
                     let id = pr.id;
                     let (part, orig) = (pr.part, pr.orig);
                     let d = [(p.pos[0] - pr.start[0]) / self.width.max(1.0), (p.pos[1] - pr.start[1]) / self.height.max(1.0)];
-                    let mut is_l = false;
-                    if let Some(prop) = self.file.props.iter_mut().find(|q| q.id == id) {
-                        if let PropKind::Lights { a, b, .. } = &mut prop.kind {
-                            is_l = true;
-                            let c = |v: f32| v.clamp(0.0, 1.0);
-                            match part {
-                                Part::Move => {
-                                    let lim = |k: usize| {
-                                        let (lo, hi) = (orig[0][k].min(orig[1][k]), orig[0][k].max(orig[1][k]));
-                                        d[k].clamp(-lo, 1.0 - hi)
-                                    };
-                                    let (dx, dy) = (lim(0), lim(1));
-                                    *a = [orig[0][0] + dx, orig[0][1] + dy];
-                                    *b = [orig[1][0] + dx, orig[1][1] + dy];
-                                }
-                                Part::EndA => *a = [c(orig[0][0] + d[0]), c(orig[0][1] + d[1])],
-                                Part::EndB => *b = [c(orig[1][0] + d[0]), c(orig[1][1] + d[1])],
-                            }
-                        } else {
-                            prop.x = x;
-                        }
+                    let linked = std::mem::take(&mut pr.linked);
+                    let is_l = self.file.props.iter().find(|q| q.id == id).is_some_and(is_lights);
+                    if is_l {
+                        self.drag_lights(id, part, orig, d, &linked);
                         self.dirty = true;
+                    } else if let Some(prop) = self.file.props.iter_mut().find(|q| q.id == id) {
+                        prop.x = x;
+                        self.dirty = true;
+                    }
+                    if let Some(pr) = self.press.as_mut() {
+                        pr.linked = linked;
                     }
                     if is_l {
                         // string lights do not tilt while dragged
@@ -1085,7 +1265,10 @@ impl Effect for Layer {
         // Hover target.
         let hover_id = match (&self.press, ptr) {
             (Some(pr), _) if pr.dragging => Some(pr.id),
-            (_, Some(p)) if p.over_desktop => self.hit_part(p.pos).map(|(i, _)| self.file.props[i].id),
+            (_, Some(p)) if p.over_desktop => self
+                .hit_part(p.pos)
+                .filter(|&(i, _)| !self.locked.get(i).copied().unwrap_or(false))
+                .map(|(i, _)| self.file.props[i].id),
             _ => None,
         };
         let dragging_id = self.press.as_ref().filter(|p| p.dragging).map(|p| p.id);
@@ -1113,7 +1296,14 @@ impl Effect for Layer {
                     }
                 }
             }
-            let target = if hover_id == Some(p.id) { 1.0 } else { 0.0 };
+            // In edit mode every prop shows a faint highlight (lights show their handles).
+            let target = if hover_id == Some(p.id) {
+                1.0
+            } else if self.edit_mode {
+                0.45
+            } else {
+                0.0
+            };
             tr.hover += (target - tr.hover) * (dt * 12.0).min(1.0);
             if dragging_id != Some(p.id) {
                 tr.tilt -= tr.tilt * (dt * 8.0).min(1.0);
@@ -1159,8 +1349,9 @@ impl Effect for Layer {
 
     /// Bounding boxes of all props (the plough is deliberately not a grab zone).
     fn grab_zones(&self, out: &mut Vec<[f32; 4]>) {
-        out.extend(self.zones.iter().filter(|z| z[2] > z[0]));
-        out.extend(self.lzones.iter().map(|(_, _, z)| *z));
+        let free = |i: usize| !self.locked.get(i).copied().unwrap_or(false);
+        out.extend(self.zones.iter().enumerate().filter(|(i, z)| z[2] > z[0] && free(*i)).map(|(_, z)| *z));
+        out.extend(self.lzones.iter().filter(|(i, _, _)| free(*i)).map(|(_, _, z)| *z));
         out.extend(self.yeti_zone);
         out.extend(self.gift_zone);
     }
@@ -1697,5 +1888,129 @@ idle(&mut l, 0.05);
         l.add_snowman();
         assert!((l.file.props[1].x - 0.5).abs() < 0.01);
         assert!(finite(&l));
+    }
+
+    #[test]
+    fn press_into_a_window_in_front_is_ignored() {
+        let (mut l, _) = layer("window-front");
+        l.add_snowman();
+        let c = center(&l, 0);
+        let at = |l: &mut Layer, down| {
+            let s = Scene {
+                surfaces: &[],
+                ground: None,
+                pointer: Some(Pointer { pos: c, vel: [0.0; 2], down, over_desktop: false }),
+                snowballs: false,
+            };
+            l.update(0.016, &ENV, &s);
+        };
+        at(&mut l, false);
+        at(&mut l, true);
+        at(&mut l, false);
+        let mut out = Vec::new();
+        l.take_actions(&mut out);
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn props_next_to_icons_lock_until_edit_mode() {
+        let (mut l, _) = layer("icons");
+        l.add_snowman();
+        let z = l.zones[0];
+        // An icon just left of the snowman.
+        l.set_desktop_icons(&[[z[0] - 80.0, z[1], z[0] - 2.0, z[1] + 70.0]]);
+        assert!(l.has_locked());
+        let mut zones = Vec::new();
+        l.grab_zones(&mut zones);
+        assert!(zones.is_empty(), "locked props must not swallow desktop clicks");
+        let c = center(&l, 0);
+        click(&mut l, c);
+        let mut out = Vec::new();
+        l.take_actions(&mut out);
+        assert_eq!(out, vec![Action::LockedHint { pos: c }]);
+
+        // Pressing on the icon itself gives no hint (the icon gets the click).
+        l.set_desktop_icons(&[[c[0] - 5.0, c[1] - 5.0, c[0] + 5.0, c[1] + 5.0]]);
+        click(&mut l, c);
+        l.take_actions(&mut out);
+        assert_eq!(out.len(), 1);
+
+        l.set_edit_mode(true);
+        assert!(!l.has_locked());
+        let x0 = l.file.props[0].x;
+        drag_x(&mut l, c, 150.0);
+        assert!(l.file.props[0].x > x0);
+        l.set_edit_mode(false);
+        l.set_desktop_icons(&[]);
+        assert!(!l.has_locked());
+    }
+
+    fn drag_x(l: &mut Layer, from: [f32; 2], dx: f32) {
+        drag(l, from, [dx, 0.0]);
+    }
+
+    fn set_lights(l: &mut Layer, idx: usize, na: [f32; 2], nb: [f32; 2]) {
+        if let PropKind::Lights { a, b, .. } = &mut l.file.props[idx].kind {
+            *a = na;
+            *b = nb;
+        }
+        l.rebuild();
+    }
+
+    fn ends(l: &Layer, idx: usize) -> ([f32; 2], [f32; 2]) {
+        match l.file.props[idx].kind {
+            PropKind::Lights { a, b, .. } => (a, b),
+            _ => panic!("not lights"),
+        }
+    }
+
+    #[test]
+    fn light_ends_snap_together_and_move_as_a_joint() {
+        let (mut l, _) = layer("lights-snap");
+        l.add_lights();
+        l.add_lights();
+        set_lights(&mut l, 0, [0.1, 0.2], [0.4, 0.2]);
+        set_lights(&mut l, 1, [0.6, 0.5], [0.9, 0.5]);
+        // Drag string 1's end A to within a few px of string 0's end B: it snaps exactly.
+        let (b0, a1) = (ends(&l, 0).1, ends(&l, 1).0);
+        let from = [a1[0] * 1920.0, a1[1] * 1080.0];
+        let target = [b0[0] * 1920.0 + 9.0, b0[1] * 1080.0 - 7.0];
+        drag(&mut l, from, [target[0] - from[0], target[1] - from[1]]);
+        assert_eq!(ends(&l, 1).0, ends(&l, 0).1);
+
+        // Dragging the joint moves both strings' ends.
+        let j = ends(&l, 0).1;
+        let jp = [j[0] * 1920.0, j[1] * 1080.0];
+        drag(&mut l, jp, [0.0, 120.0]);
+        let (b0, a1) = (ends(&l, 0).1, ends(&l, 1).0);
+        assert_eq!(b0, a1);
+        assert!((b0[1] - (j[1] + 120.0 / 1080.0)).abs() < 0.002, "{b0:?}");
+        assert_eq!(ends(&l, 0).0, [0.1, 0.2]);
+        assert_eq!(ends(&l, 1).1, [0.9, 0.5]);
+
+        // Far ends don't snap.
+        let a0 = ends(&l, 0).0;
+        drag(&mut l, [a0[0] * 1920.0, a0[1] * 1080.0], [0.0, 300.0]);
+        assert_ne!(ends(&l, 0).0, ends(&l, 1).1);
+    }
+
+    #[test]
+    fn moving_a_whole_string_snaps_its_end_to_a_neighbour() {
+        let (mut l, _) = layer("lights-move-snap");
+        l.add_lights();
+        l.add_lights();
+        set_lights(&mut l, 0, [0.1, 0.2], [0.3, 0.2]);
+        set_lights(&mut l, 1, [0.5, 0.6], [0.7, 0.6]);
+        let (a1, b1) = ends(&l, 1);
+        let (ap, bp, sag) = l.lights_px(a1, b1);
+        let mid = Layer::wire_at(ap, bp, sag, 0.5);
+        // Bring string 1's end A close to string 0's end B (off by ~10 px).
+        let b0 = ends(&l, 0).1;
+        let by = [(b0[0] - a1[0]) * 1920.0 + 10.0, (b0[1] - a1[1]) * 1080.0 + 6.0];
+        drag(&mut l, mid, by);
+        let (na, nb) = ends(&l, 1);
+        assert!((na[0] - b0[0]).abs() < 1e-5 && (na[1] - b0[1]).abs() < 1e-5, "{na:?} vs {b0:?}");
+        // Shape kept.
+        assert!(((nb[0] - na[0]) - (b1[0] - a1[0])).abs() < 1e-5);
     }
 }

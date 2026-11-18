@@ -231,6 +231,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"En pause sur batterie",
         "tray.paused_fullscreen" => r"En pause pendant une app en plein écran",
         "tray.no_renderer" => r"Affichage impossible. Détails : %APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "Mode édition",
+        "toast.locked" => "Cet objet est à côté d’icônes du bureau, il est verrouillé. Activez le mode édition pour le déplacer :",
+        "toast.edit_on" => "Mode édition activé : tout peut être déplacé, même près des icônes. Pour le désactiver :",
+        "toast.edit_off" => "Mode édition désactivé. Les objets près des icônes sont de nouveau verrouillés.",
         _ => return None,
     })
 }

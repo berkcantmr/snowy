@@ -231,6 +231,10 @@ pub fn get(key: &str) -> Option<&'static str> {
         "tray.paused_battery" => r"使用电池时已暂停",
         "tray.paused_fullscreen" => r"全屏应用运行时已暂停",
         "tray.no_renderer" => r"无法绘制。详情：%APPDATA%\Snowy\snowy.log",
+        "menu.edit_mode" => "编辑模式",
+        "toast.locked" => "此对象靠近桌面图标，已锁定。要移动它，请打开编辑模式：",
+        "toast.edit_on" => "编辑模式已开启：即使在图标旁边也可以移动。关闭方式：",
+        "toast.edit_off" => "编辑模式已关闭。图标旁边的对象已重新锁定。",
         _ => return None,
     })
 }
