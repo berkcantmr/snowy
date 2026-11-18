@@ -14,7 +14,7 @@ fn main() {
         .set("CompanyName", "Snowy")
         .set("OriginalFilename", "snowy.exe")
         .set("InternalName", "snowy")
-        .set("LegalCopyright", "MIT License");
+        .set("LegalCopyright", "Copyright (c) 2026 berkcantmr. PolyForm Noncommercial 1.0.0");
     // version comes from CARGO_PKG_VERSION automatically
     if let Err(e) = res.compile() {
         panic!("failed to embed Windows resources: {e}");
