@@ -16,6 +16,15 @@ use windows::Win32::Graphics::Dxgi::*;
 const INSTANCE_SIZE: usize = std::mem::size_of::<Instance>();
 const MIN_INSTANCES: usize = 1024;
 
+/// Minimal shader with the instance layout of `SHADER_CONTRACT`, compiled at startup to
+/// check that the device can build our pipelines.
+const PROBE_SHADER: &str = r"
+struct VSIn { float2 pos : POS; float size : SIZE; float rot : ROT; float4 color : COLOR; float4 param : PARAM; uint vid : SV_VertexID; };
+struct VSOut { float4 pos : SV_POSITION; float4 color : COLOR; };
+VSOut VSMain(VSIn i) { VSOut o; o.pos = float4(i.pos * i.size + i.rot + i.param.xy, 0, 1); o.color = i.color; return o; }
+float4 PSMain(VSOut i) : SV_TARGET { return i.color; }
+";
+
 struct Pipeline {
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
@@ -36,35 +45,66 @@ pub struct Renderer {
     ibuf: Option<ID3D11Buffer>,
     ibuf_cap: usize,
     pipelines: HashMap<usize, Pipeline>,
+    /// Shader targets for this device's feature level.
+    targets: (PCSTR, PCSTR),
     size: (u32, u32),
     cleared: bool,
 }
 
-fn create_device() -> Result<(ID3D11Device, ID3D11DeviceContext)> {
-    let mut last = None;
-    for driver in [D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP] {
-        let mut device = None;
-        let mut ctx = None;
-        let r = unsafe {
-            D3D11CreateDevice(
-                None,
-                driver,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                None,
-                Some(&mut ctx),
-            )
-        };
-        match (r, device, ctx) {
-            (Ok(()), Some(d), Some(c)) => return Ok((d, c)),
-            (Err(e), _, _) => last = Some(e),
-            _ => {}
-        }
+/// Device plus the shader targets its feature level supports.
+struct Device {
+    device: ID3D11Device,
+    ctx: ID3D11DeviceContext,
+    /// (vertex, pixel) shader targets: SM 5.0 on feature level 11+, SM 4.0 on 10.x.
+    targets: (PCSTR, PCSTR),
+}
+
+fn create_device(driver: D3D_DRIVER_TYPE) -> Result<Device> {
+    let mut device = None;
+    let mut ctx = None;
+    let mut level = D3D_FEATURE_LEVEL::default();
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            driver,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            Some(&mut level),
+            Some(&mut ctx),
+        )
+        .context("D3D11CreateDevice")?;
     }
-    Err(anyhow!("D3D11CreateDevice failed: {:?}", last))
+    let (Some(device), Some(ctx)) = (device, ctx) else {
+        return Err(anyhow!("D3D11CreateDevice returned no device"));
+    };
+    let targets = if level.0 >= D3D_FEATURE_LEVEL_11_0.0 {
+        (s!("vs_5_0"), s!("ps_5_0"))
+    } else if level.0 >= D3D_FEATURE_LEVEL_10_0.0 {
+        (s!("vs_4_0"), s!("ps_4_0"))
+    } else {
+        return Err(anyhow!("feature level {:#x} is below 10.0", level.0));
+    };
+    Ok(Device { device, ctx, targets })
+}
+
+/// "GPU name (feature level)" for the log.
+fn describe(device: &ID3D11Device) -> String {
+    unsafe {
+        let level = device.GetFeatureLevel().0;
+        let name = device
+            .cast::<IDXGIDevice>()
+            .and_then(|d| d.GetAdapter())
+            .and_then(|a| a.GetDesc())
+            .map(|d| {
+                let n = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+                String::from_utf16_lossy(&d.Description[..n])
+            })
+            .unwrap_or_else(|_| "unknown adapter".into());
+        format!("{name} (feature level {}.{})", level >> 12, (level >> 8) & 0xf)
+    }
 }
 
 fn compile(src: &str, entry: PCSTR, target: PCSTR) -> Result<Vec<u8>> {
@@ -117,8 +157,31 @@ fn elem(name: PCSTR, format: DXGI_FORMAT, offset: u32) -> D3D11_INPUT_ELEMENT_DE
 }
 
 impl Renderer {
+    /// Sets up rendering into `hwnd`, on the GPU if possible, else on WARP (software).
+    /// Every step is retried on WARP, not only device creation: some drivers create a
+    /// device but then fail composition swap chains or shaders.
     pub fn new(hwnd: HWND, width: u32, height: u32) -> Result<Self> {
-        let (device, ctx) = create_device()?;
+        let mut errors = Vec::new();
+        // SNOWY_RENDERER=warp skips the GPU (to test the fallback, or to dodge a bad driver).
+        let warp_only = std::env::var("SNOWY_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("warp"));
+        let drivers = [(D3D_DRIVER_TYPE_HARDWARE, "GPU"), (D3D_DRIVER_TYPE_WARP, "WARP")];
+        for (driver, name) in drivers.into_iter().skip(warp_only as usize) {
+            match Self::with_driver(hwnd, width, height, driver) {
+                Ok(r) => {
+                    log::info!("renderer: {name}, {}", describe(&r.device));
+                    return Ok(r);
+                }
+                Err(e) => {
+                    log::warn!("renderer on {name} failed: {e:#}");
+                    errors.push(format!("{name}: {e:#}"));
+                }
+            }
+        }
+        Err(anyhow!("no usable renderer ({})", errors.join("; ")))
+    }
+
+    fn with_driver(hwnd: HWND, width: u32, height: u32, driver: D3D_DRIVER_TYPE) -> Result<Self> {
+        let Device { device, ctx, targets } = create_device(driver)?;
         unsafe {
             let dxgi_device: IDXGIDevice = device.cast()?;
             let factory: IDXGIFactory2 = dxgi_device.GetAdapter()?.GetParent()?;
@@ -183,6 +246,7 @@ impl Renderer {
             let mut r = Renderer {
                 device,
                 ctx,
+                targets,
                 swapchain,
                 rtv: None,
                 _dcomp: dcomp,
@@ -198,6 +262,10 @@ impl Renderer {
                 cleared: false,
             };
             r.create_rtv()?;
+            // Prove the pipeline works now (with a shader every effect shares the contract
+            // of), so a broken driver falls back to WARP instead of failing every frame.
+            r.pipeline(PROBE_SHADER).context("test shader")?;
+            r.clear().context("first present")?;
             Ok(r)
         }
     }
@@ -232,8 +300,8 @@ impl Renderer {
         if self.pipelines.contains_key(&key) {
             return Ok(());
         }
-        let vs_code = compile(src, s!("VSMain"), s!("vs_5_0"))?;
-        let ps_code = compile(src, s!("PSMain"), s!("ps_5_0"))?;
+        let vs_code = compile(src, s!("VSMain"), self.targets.0)?;
+        let ps_code = compile(src, s!("PSMain"), self.targets.1)?;
         let elems = [
             elem(s!("POS"), DXGI_FORMAT_R32G32_FLOAT, 0),
             elem(s!("SIZE"), DXGI_FORMAT_R32_FLOAT, 8),

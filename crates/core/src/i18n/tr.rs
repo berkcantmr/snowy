@@ -228,6 +228,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "menu.skip_update" => "Bu sürümü atla",
         "tray.tooltip_update" => "Snowy — v{v} mevcut",
         "tray.tooltip" => "Snowy",
+        "tray.paused_battery" => r"Pilde çalışırken duraklatıldı",
+        "tray.paused_fullscreen" => r"Tam ekran uygulama açıkken duraklatıldı",
+        "tray.no_renderer" => r"Bu bilgisayarda çizim başlatılamadı. Ayrıntılar: %APPDATA%\Snowy\snowy.log",
         _ => return None,
     })
 }

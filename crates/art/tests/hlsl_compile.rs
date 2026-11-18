@@ -24,4 +24,6 @@ fn compile(src: &str, entry: PCSTR, target: PCSTR, name: &str) {
 fn props_shader_compiles() {
     compile(snowy_art::SHADER, s!("VSMain"), s!("vs_5_0"), "props VS");
     compile(snowy_art::SHADER, s!("PSMain"), s!("ps_5_0"), "props PS");
+    compile(snowy_art::SHADER, s!("VSMain"), s!("vs_4_0"), "props VS (SM4)");
+    compile(snowy_art::SHADER, s!("PSMain"), s!("ps_4_0"), "props PS (SM4)");
 }

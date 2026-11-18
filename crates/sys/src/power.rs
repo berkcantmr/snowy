@@ -8,8 +8,8 @@ use windows::Win32::UI::Shell::{
     SHQueryUserNotificationState, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetDesktopWindow, GetForegroundWindow, GetShellWindow, GetWindowRect,
-    GetWindowThreadProcessId,
+    GetClassNameW, GetDesktopWindow, GetForegroundWindow, GetShellWindow, GetWindowLongW,
+    GetWindowRect, GetWindowThreadProcessId, IsZoomed, GWL_STYLE, WS_CAPTION,
 };
 
 /// True when running on battery (AC offline).
@@ -65,6 +65,13 @@ pub fn foreground_is_fullscreen() -> bool {
             return false;
         }
         if matches!(class_name(hwnd).as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd") {
+            return false;
+        }
+        // A maximized or titled window is an ordinary app window, even when it covers the
+        // whole monitor (auto-hidden taskbar). Fullscreen games, videos and F11 browsers
+        // drop the title bar.
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        if IsZoomed(hwnd).as_bool() || style & WS_CAPTION.0 == WS_CAPTION.0 {
             return false;
         }
         window_covers_monitor(hwnd)

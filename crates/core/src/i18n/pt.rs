@@ -228,6 +228,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "menu.skip_update" => "Ignorar esta versão",
         "tray.tooltip_update" => "Snowy — v{v} disponível",
         "tray.tooltip" => "Snowy",
+        "tray.paused_battery" => r"Pausado enquanto estiver na bateria",
+        "tray.paused_fullscreen" => r"Pausado enquanto um app em tela cheia estiver aberto",
+        "tray.no_renderer" => r"Não foi possível desenhar. Detalhes: %APPDATA%\Snowy\snowy.log",
         _ => return None,
     })
 }

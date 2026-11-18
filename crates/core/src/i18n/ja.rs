@@ -228,6 +228,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "menu.skip_update" => "このバージョンをスキップ",
         "tray.tooltip_update" => "Snowy — v{v} を利用できます",
         "tray.tooltip" => "Snowy",
+        "tray.paused_battery" => r"バッテリー駆動中のため一時停止中",
+        "tray.paused_fullscreen" => r"全画面アプリの実行中は一時停止中",
+        "tray.no_renderer" => r"描画を開始できません。詳細: %APPDATA%\Snowy\snowy.log",
         _ => return None,
     })
 }

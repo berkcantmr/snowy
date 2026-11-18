@@ -18,6 +18,18 @@ struct Screen {
     /// Snowmen/trees/plough: a second overlay that always sits behind windows.
     props_overlay: Option<OverlayWindow>,
     props: Layer,
+    /// Failed frames so far; only some are logged so a broken driver can't flood the log.
+    render_errors: u32,
+}
+
+impl Screen {
+    fn note_render_error(&mut self, what: &str, e: &anyhow::Error) {
+        self.render_errors += 1;
+        let n = self.render_errors;
+        if n <= 3 || n.is_multiple_of(1000) {
+            log::warn!("{what} failed on {} (x{n}): {e:#}", self.monitor.id);
+        }
+    }
 }
 
 struct App {
@@ -27,6 +39,10 @@ struct App {
     active: Option<EffectKind>,
     user_paused: bool,
     auto_paused: bool,
+    /// Why `auto_paused` is set (i18n key), for the tray tooltip and the log.
+    pause_reason: Option<&'static str>,
+    /// No overlay could be created on any enabled monitor.
+    no_renderer: bool,
     random_since: Instant,
     wind: Wind,
     tray: Tray,
@@ -84,7 +100,8 @@ fn main() -> anyhow::Result<()> {
     let settings = Settings::load();
     sync_autostart(settings.start_with_windows);
     let lang = lang_of(&settings);
-    let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang, update: None })?;
+    log_startup(&settings);
+    let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang, update: None, notice: None })?;
 
     let mut app = App {
         settings_mtime: mtime(),
@@ -93,6 +110,8 @@ fn main() -> anyhow::Result<()> {
         active: None,
         user_paused: false,
         auto_paused: false,
+        pause_reason: None,
+        no_renderer: false,
         random_since: Instant::now(),
         wind: Wind::default(),
         tray,
@@ -146,8 +165,19 @@ fn main() -> anyhow::Result<()> {
                 app.rebuild_screens();
                 app.resolve_effect(true);
             }
-            app.auto_paused = (app.settings.pause_on_battery && snowy_sys::on_battery())
-                || (app.settings.pause_on_fullscreen && snowy_sys::foreground_is_fullscreen());
+            let reason = if app.settings.pause_on_battery && snowy_sys::on_battery() {
+                Some("tray.paused_battery")
+            } else if app.settings.pause_on_fullscreen && snowy_sys::foreground_is_fullscreen() {
+                Some("tray.paused_fullscreen")
+            } else {
+                None
+            };
+            if reason != app.pause_reason {
+                log::info!("automatic pause: {}", reason.unwrap_or("off"));
+                app.pause_reason = reason;
+                app.auto_paused = reason.is_some();
+                app.refresh_tray();
+            }
             app.resolve_effect(false);
             app.tick_wallpaper();
         }
@@ -197,7 +227,7 @@ fn main() -> anyhow::Result<()> {
                 _ => s.overlay.clear(),
             };
             if let Err(e) = res {
-                log::warn!("render failed on {}: {e:#}", s.monitor.id);
+                s.note_render_error("render", &e);
             }
         }
         app.update_props(dt, &env, props_running);
@@ -410,10 +440,20 @@ impl App {
 
     fn rebuild_screens(&mut self) {
         self.screens.clear();
+        let mut wanted = 0;
         for m in snowy_sys::monitors() {
             if self.settings.disabled_monitors.contains(&m.id) {
                 continue;
             }
+            wanted += 1;
+            log::info!(
+                "monitor {}: {:?}, work area {:?}, scale {}{}",
+                m.id,
+                m.rect,
+                m.work_rect,
+                m.dpi_scale,
+                if m.primary { ", primary" } else { "" }
+            );
             match OverlayWindow::new(&m, self.settings.behind_windows) {
                 Ok(overlay) => {
                     let props_overlay = OverlayWindow::new(&m, true)
@@ -421,12 +461,25 @@ impl App {
                         .ok();
                     let (w, h) = overlay.size();
                     let props = Layer::new(&m, w as f32, h as f32, ground_y(&m));
-                    self.screens.push(Screen { monitor: m, overlay, effect: None, surfaces: Vec::new(), props_overlay, props });
+                    self.screens.push(Screen {
+                        monitor: m,
+                        overlay,
+                        effect: None,
+                        surfaces: Vec::new(),
+                        props_overlay,
+                        props,
+                        render_errors: 0,
+                    });
                 }
                 Err(e) => log::error!("overlay for {} failed: {e:#}", m.id),
             }
         }
         self.active = None;
+        let no_renderer = wanted > 0 && self.screens.is_empty();
+        if no_renderer != self.no_renderer {
+            self.no_renderer = no_renderer;
+            self.refresh_tray();
+        }
     }
 
     /// Decide which concrete effect should run; (re)create per-screen effects if it changed.
@@ -523,7 +576,7 @@ impl App {
                 ov.clear()
             };
             if let Err(e) = res {
-                log::warn!("props render failed on {}: {e:#}", s.monitor.id);
+                s.note_render_error("props render", &e);
             }
             actions.clear();
             s.props.take_actions(&mut actions);
@@ -579,6 +632,7 @@ impl App {
             paused: self.user_paused,
             lang: lang_of(&self.settings),
             update: self.update_shown.clone(),
+            notice: if self.no_renderer { Some("tray.no_renderer") } else { self.pause_reason },
         };
         self.tray.update(&state);
     }
@@ -793,21 +847,72 @@ fn sync_autostart(enabled: bool) {
     }
 }
 
-struct StderrLogger;
-impl log::Log for StderrLogger {
+/// Log sink: stderr in debug builds; in release (no console) `%APPDATA%\Snowy\snowy.log`,
+/// so problems on other PCs can be diagnosed. The previous run's log is kept as
+/// `snowy.old.log`; one run writes at most `LOG_CAP` bytes.
+struct Logger {
+    file: Option<std::sync::Mutex<(std::fs::File, u64)>>,
+    start: Instant,
+}
+
+const LOG_CAP: u64 = 1 << 20;
+
+impl log::Log for Logger {
     fn enabled(&self, _: &log::Metadata) -> bool {
         true
     }
     fn log(&self, r: &log::Record) {
-        eprintln!("[{}] {}: {}", r.level(), r.target(), r.args());
+        let t = self.start.elapsed().as_secs_f32();
+        let line = format!("[{t:9.2}] {} {}: {}\n", r.level(), r.target(), r.args());
+        match &self.file {
+            Some(f) => {
+                use std::io::Write;
+                if let Ok(mut g) = f.lock() {
+                    if g.1 < LOG_CAP && g.0.write_all(line.as_bytes()).is_ok() {
+                        g.1 += line.len() as u64;
+                    }
+                }
+            }
+            None => eprint!("{line}"),
+        }
     }
     fn flush(&self) {}
 }
 
 fn init_logger() {
-    static LOGGER: StderrLogger = StderrLogger;
-    let _ = log::set_logger(&LOGGER);
-    log::set_max_level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Warn });
+    let file = if cfg!(debug_assertions) {
+        None
+    } else {
+        let dir = Settings::dir();
+        let path = dir.join("snowy.log");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::rename(&path, dir.join("snowy.old.log"));
+        std::fs::File::create(&path).ok().map(|f| std::sync::Mutex::new((f, 0)))
+    };
+    let logger: &'static Logger = Box::leak(Box::new(Logger { file, start: Instant::now() }));
+    let _ = log::set_logger(logger);
+    log::set_max_level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info });
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        default_hook(info);
+    }));
+}
+
+/// What the log needs to explain "nothing shows up" on someone else's PC.
+fn log_startup(s: &Settings) {
+    log::info!("Snowy {} starting", env!("CARGO_PKG_VERSION"));
+    log::info!(
+        "settings: effect {:?}, behind windows {}, pause on battery {} (on battery now: {}), \
+         pause in fullscreen {} (fullscreen now: {}), disabled monitors {:?}",
+        s.effect,
+        s.behind_windows,
+        s.pause_on_battery,
+        snowy_sys::on_battery(),
+        s.pause_on_fullscreen,
+        snowy_sys::foreground_is_fullscreen(),
+        s.disabled_monitors,
+    );
 }
 
 fn mtime() -> Option<SystemTime> {

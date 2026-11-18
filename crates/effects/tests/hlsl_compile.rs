@@ -44,5 +44,8 @@ fn all_shaders_compile() {
         let src = e.shader();
         compile(src, s!("VSMain"), s!("vs_5_0"), &format!("{kind:?} VS"));
         compile(src, s!("PSMain"), s!("ps_5_0"), &format!("{kind:?} PS"));
+        // Feature level 10.x GPUs (older integrated graphics) get Shader Model 4.0.
+        compile(src, s!("VSMain"), s!("vs_4_0"), &format!("{kind:?} VS (SM4)"));
+        compile(src, s!("PSMain"), s!("ps_4_0"), &format!("{kind:?} PS (SM4)"));
     }
 }

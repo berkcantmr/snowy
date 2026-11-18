@@ -228,6 +228,9 @@ pub const KEYS: &[&str] = &[
     "menu.skip_update",
     "tray.tooltip_update",
     "tray.tooltip",
+    "tray.paused_battery",
+    "tray.paused_fullscreen",
+    "tray.no_renderer",
 ];
 
 pub fn get(key: &str) -> Option<&'static str> {
@@ -458,6 +461,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "menu.skip_update" => "Skip this version",
         "tray.tooltip_update" => "Snowy — v{v} is available",
         "tray.tooltip" => "Snowy",
+        "tray.paused_battery" => r"Paused while on battery",
+        "tray.paused_fullscreen" => r"Paused while a fullscreen app is open",
+        "tray.no_renderer" => r"Can't draw on this PC. Details: %APPDATA%\Snowy\snowy.log",
         _ => return None,
     })
 }

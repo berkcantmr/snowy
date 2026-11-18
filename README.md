@@ -48,11 +48,19 @@ use "Check now" on the About page. Turn the daily check off under Settings > Sys
 Only `https` downloads from github.com are accepted, the installer is capped at 60 MB, and a
 file whose checksum does not match is deleted and never run.
 
-Maintainers: `powershell -ExecutionPolicy Bypass -File installer
-elease.ps1` builds
-everything, writes `dist\Snowy-<version>-setup.exe.sha256` and prints the `gh release create`
+Maintainers: `powershell -ExecutionPolicy Bypass -File installer\release.ps1` builds everything, writes `dist\Snowy-<version>-setup.exe.sha256` and prints the `gh release create`
 command to publish (add `-Publish` to run it). A release needs the assets
 `Snowy-<version>-setup.exe` and `Snowy-<version>-setup.exe.sha256`, and a tag `v<version>`.
+
+## Troubleshooting
+
+If no weather or desktop objects appear, hover the tray icon: it says when Snowy is paused
+on battery or while a fullscreen app is open (both can be turned off under Settings > System),
+or when it could not start drawing at all. Snowy writes a short log to
+`%APPDATA%\Snowy\snowy.log` (the previous run's is `snowy.old.log`) with the monitors, the
+graphics adapter it uses and any errors; it contains no personal data, so you can attach it
+to a bug report. If the GPU path fails, Snowy falls back to Windows' software renderer (WARP)
+by itself; setting the environment variable `SNOWY_RENDERER=warp` forces that.
 
 ## Privacy
 

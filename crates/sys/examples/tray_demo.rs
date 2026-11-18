@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 fn main() -> anyhow::Result<()> {
     snowy_sys::init_dpi_awareness();
-    let mut state = TrayState { effect: EffectChoice::Season, paused: false, lang: "en".into(), update: None };
+    let mut state = TrayState { effect: EffectChoice::Season, paused: false, lang: "en".into(), update: None, notice: None };
     let mut tray = Tray::new(&state)?;
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(5) {

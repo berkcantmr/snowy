@@ -228,6 +228,9 @@ pub fn get(key: &str) -> Option<&'static str> {
         "menu.skip_update" => "跳过此版本",
         "tray.tooltip_update" => "Snowy — 可更新到 v{v}",
         "tray.tooltip" => "Snowy",
+        "tray.paused_battery" => r"使用电池时已暂停",
+        "tray.paused_fullscreen" => r"全屏应用运行时已暂停",
+        "tray.no_renderer" => r"无法绘制。详情：%APPDATA%\Snowy\snowy.log",
         _ => return None,
     })
 }

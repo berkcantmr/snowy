@@ -12,6 +12,9 @@ pub struct TrayState {
     pub lang: String,
     /// Version (without "v") of a newer release the user can install, if any.
     pub update: Option<String>,
+    /// Why nothing is drawn right now (an i18n key such as "tray.paused_battery"), shown in
+    /// the tooltip so an automatic pause never looks like a broken app.
+    pub notice: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,9 +102,14 @@ fn pause_label(state: &TrayState) -> &'static str {
 }
 
 fn tooltip(state: &TrayState) -> String {
-    match &state.update {
+    let base = match &state.update {
         Some(v) => i18n::t(&state.lang, "tray.tooltip_update").replace("{v}", v),
         None => i18n::t(&state.lang, "tray.tooltip").to_string(),
+    };
+    match state.notice {
+        Some(key) => format!("{base}
+{}", i18n::t(&state.lang, key)),
+        None => base,
     }
 }
 
@@ -202,6 +210,9 @@ impl Tray {
             self.items.settings.set_text(i18n::t(&state.lang, "menu.settings"));
             self.items.quit.set_text(i18n::t(&state.lang, "menu.quit"));
         }
+        if state.notice != self.state.notice {
+            let _ = self.icon.set_tooltip(Some(tooltip(state)));
+        }
         sync_checks(&self.items, state.effect);
         self.state = state.clone();
     }
@@ -255,9 +266,26 @@ mod tests {
 
     #[test]
     fn tooltip_mentions_version() {
-        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None };
+        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None, notice: None };
         assert_eq!(tooltip(&st), "Snowy");
         st.update = Some("1.2.3".into());
         assert!(tooltip(&st).contains("1.2.3"));
+    }
+
+    #[test]
+    fn tooltip_explains_automatic_pause() {
+        let mut st = TrayState { effect: EffectChoice::Off, paused: false, lang: "en".into(), update: None, notice: None };
+        st.notice = Some("tray.paused_battery");
+        let tip = tooltip(&st);
+        assert!(tip.starts_with("Snowy\n") && tip.contains("battery"), "{tip}");
+        // Windows truncates tray tooltips at 127 UTF-16 units.
+        for (lang, _) in i18n::LANGS {
+            for key in ["tray.paused_battery", "tray.paused_fullscreen", "tray.no_renderer"] {
+                st.lang = lang.to_string();
+                st.update = Some("10.10.10".into());
+                st.notice = Some(key);
+                assert!(tooltip(&st).encode_utf16().count() <= 127, "{lang} {key}");
+            }
+        }
     }
 }
