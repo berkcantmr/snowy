@@ -146,12 +146,13 @@ pub fn run_editor_demo(monitor_id: String, prop_id: u64, auto_close: Option<std:
     .map_err(|e| anyhow::anyhow!("editor window failed: {e}"))
 }
 
-/// The "What's new" window (`snowy.exe --whats-new`), shown once after an update. Blocks until
-/// it is closed.
-pub fn run_whats_new() -> anyhow::Result<()> {
+/// The "What's new" window (`snowy.exe --whats-new --since <version>`), shown once after an
+/// update with the highlights of every release newer than `since` (the version used before;
+/// empty = only the newest release). Blocks until it is closed.
+pub fn run_whats_new(since: &str) -> anyhow::Result<()> {
     let settings = snowy_core::config::Settings::load();
     let lang = state::effective_lang(&settings.language, win::windows_locale().as_deref());
-    run_whats_new_inner(lang, None, true)
+    run_whats_new_inner(lang, since.to_string(), None, true)
 }
 
 /// Like `run_whats_new`, optionally closing automatically after `auto_close` (used by the demo
@@ -163,10 +164,12 @@ pub fn run_whats_new_demo(auto_close: Option<std::time::Duration>) -> anyhow::Re
         Ok(l) if !l.is_empty() => snowy_core::i18n::resolve_lang(&l),
         _ => state::effective_lang(&settings.language, win::windows_locale().as_deref()),
     };
-    run_whats_new_inner(lang, auto_close, false)
+    // DEMO_SINCE: the version to pretend the user came from (default: show everything).
+    let since = std::env::var("DEMO_SINCE").unwrap_or_else(|_| "0.0.0".to_string());
+    run_whats_new_inner(lang, since, auto_close, false)
 }
 
-fn run_whats_new_inner(lang: &'static str, auto_close: Option<std::time::Duration>, spawn_settings: bool) -> anyhow::Result<()> {
+fn run_whats_new_inner(lang: &'static str, since: String, auto_close: Option<std::time::Duration>, spawn_settings: bool) -> anyhow::Result<()> {
     let title = snowy_core::i18n::t(lang, "whats_new.title");
     let place = win::fit_window([560.0, 640.0], [480.0, 520.0], win::primary_work_area_logical());
     win::start_window_guard(place.min);
@@ -188,7 +191,7 @@ fn run_whats_new_inner(lang: &'static str, auto_close: Option<std::time::Duratio
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx, lang);
-            Ok(Box::new(whats_new::WhatsNewApp::new(&cc.egui_ctx, lang, auto_close, spawn_settings)))
+            Ok(Box::new(whats_new::WhatsNewApp::new(&cc.egui_ctx, lang, &since, auto_close, spawn_settings)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("what's new window failed: {e}"))

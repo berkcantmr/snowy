@@ -40,7 +40,8 @@ pub struct Release {
 
 // ---------------------------------------------------------------- versions
 
-fn parse_version(s: &str) -> Option<Vec<u64>> {
+/// Numeric components of a version like "0.1.4" or "v1.2", or None when it is not one.
+pub fn parse_version(s: &str) -> Option<Vec<u64>> {
     let s = s.trim();
     let s = s.strip_prefix('v').or_else(|| s.strip_prefix('V')).unwrap_or(s);
     if s.is_empty() {

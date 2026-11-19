@@ -4,7 +4,7 @@
 use crate::ui::theme::{self, RichExt};
 use crate::ui::{icons, whats_new_art};
 use crate::win;
-pub use crate::whats_new_data::{highlights, Highlight, VERSION};
+pub use crate::whats_new_data::{highlights_since, Highlight, VERSION};
 use eframe::egui::{self, vec2, Align, FontId, Layout, Margin, RichText, Sense, Stroke, StrokeKind};
 use snowy_core::i18n;
 use std::time::{Duration, Instant};
@@ -16,6 +16,8 @@ pub struct WhatsNewApp {
     pal: theme::Palette,
     lang: &'static str,
     start: Instant,
+    /// The cards to show, newest first.
+    cards: Vec<&'static Highlight>,
     auto_close: Option<Duration>,
     /// Whether "Open settings" really launches `snowy.exe --settings` (off in the demo).
     spawn_settings: bool,
@@ -24,11 +26,15 @@ pub struct WhatsNewApp {
 }
 
 impl WhatsNewApp {
-    pub fn new(ctx: &egui::Context, lang: &'static str, auto_close: Option<Duration>, spawn_settings: bool) -> Self {
+    pub fn new(ctx: &egui::Context, lang: &'static str, since: &str, auto_close: Option<Duration>, spawn_settings: bool) -> Self {
         let pal = theme::palette(win::system_prefers_dark());
         theme::apply(ctx, &pal);
         let demo_scroll = if spawn_settings { None } else { std::env::var("DEMO_SCROLL").ok().and_then(|v| v.parse().ok()) };
-        Self { pal, lang, start: Instant::now(), auto_close, spawn_settings, demo_scroll }
+        let mut cards = highlights_since(since);
+        if cards.is_empty() {
+            cards = highlights_since("");
+        }
+        Self { pal, lang, start: Instant::now(), cards, auto_close, spawn_settings, demo_scroll }
     }
 
     fn header(&self, ui: &mut egui::Ui) {
@@ -118,7 +124,14 @@ impl eframe::App for WhatsNewApp {
             area.show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 12.0;
                 ui.set_max_width(ui.available_width() - 8.0);
-                for h in highlights() {
+                let mut shown = VERSION;
+                for h in &self.cards {
+                    // A small heading before the cards of each older release.
+                    if h.version != shown {
+                        shown = h.version;
+                        let label = i18n::t(self.lang, "whats_new.version").replace("{v}", h.version);
+                        ui.label(RichText::new(label).color(self.pal.text_weak).semi().size(13.0));
+                    }
                     self.card(ui, h, t);
                 }
                 ui.add_space(2.0);

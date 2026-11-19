@@ -21,8 +21,13 @@ const WHITE: Color32 = Color32::WHITE;
 pub fn paint(painter: &Painter, rect: Rect, preview: Preview, t: f32, pal: &Palette) {
     let p = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
     backdrop(&p, rect, pal);
-    flakes(&p, rect, t, pal);
+    if preview != Preview::Smooth {
+        flakes(&p, rect, t, pal);
+    }
     match preview {
+        Preview::Drifts => drifts(&p, rect, t, pal),
+        Preview::Depth => depth(&p, rect, t, pal),
+        Preview::Smooth => smooth(&p, rect, t, pal),
         Preview::EditMode => edit_mode(&p, rect, t, pal),
         Preview::Lights => lights(&p, rect, t, pal),
         Preview::Clicks => clicks(&p, rect, t, pal),
@@ -404,4 +409,137 @@ fn fit(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
             p.text(r.center(), Align2::CENTER_CENTER, label, semibold(13.0), c(255, 255, 255, 215));
         }
     }
+}
+
+// ---------------------------------------------------------------- 0.1.5
+
+/// A taskbar along the bottom of the preview; returns its top edge.
+fn taskbar(p: &Painter, rect: Rect, pal: &Palette) -> f32 {
+    let bar = Rect::from_min_max(pos2(rect.left(), rect.bottom() - 22.0), rect.right_bottom());
+    p.rect_filled(bar, 0, if pal.dark { c(14, 20, 32, 245) } else { c(28, 40, 62, 235) });
+    for i in 0..5 {
+        let on = i == 2;
+        let r = Rect::from_center_size(pos2(bar.center().x + (i as f32 - 2.0) * 22.0, bar.center().y), vec2(13.0, 11.0));
+        p.rect_filled(r, 3, c(255, 255, 255, if on { 230 } else { 110 }));
+    }
+    bar.top()
+}
+
+/// Drift shape 0..1 at x; the pattern slides right as `t` grows (the wind pushing it).
+fn drift_shape(x: f32, t: f32) -> f32 {
+    let a = (x * 0.026 - t * 0.55).sin();
+    let b = (x * 0.071 - t * 0.9 + 1.3).sin();
+    let c = (x * 0.17 - t * 1.4 + 0.4).sin();
+    (0.52 + 0.3 * a + 0.13 * b + 0.05 * c).clamp(0.0, 1.0)
+}
+
+/// Snow resting on the line `base_y`, `height(x)` tall, white on top and faintly blue below.
+fn snow_bank(p: &Painter, left: f32, right: f32, base_y: f32, pal: &Palette, height: impl Fn(f32) -> f32) {
+    let top_col = WHITE;
+    let bot_col = if pal.dark { c(200, 216, 238, 255) } else { c(222, 234, 248, 255) };
+    let mut mesh = Mesh::default();
+    let step = 3.0;
+    let mut x = left;
+    let mut i = 0u32;
+    while x <= right + step {
+        let h = height(x).max(0.0);
+        mesh.colored_vertex(pos2(x, base_y - h), top_col);
+        mesh.colored_vertex(pos2(x, base_y + 1.0), bot_col);
+        if i > 0 {
+            let k = i * 2;
+            mesh.add_triangle(k - 2, k - 1, k);
+            mesh.add_triangle(k - 1, k + 1, k);
+        }
+        x += step;
+        i += 1;
+    }
+    p.add(Shape::mesh(mesh));
+    // A soft shadow line under the crest for depth.
+    let mut pts = Vec::new();
+    let mut x = left;
+    while x <= right {
+        pts.push(pos2(x, base_y - height(x).max(0.0) + 1.5));
+        x += 4.0;
+    }
+    p.add(Shape::line(pts, Stroke::new(1.0, c(150, 180, 220, 70))));
+}
+
+/// Short wind streaks drifting to the right.
+fn wind_streaks(p: &Painter, rect: Rect, t: f32, alpha: f32) {
+    for i in 0..6u32 {
+        let (hx, hy) = (hash(i * 7 + 11), hash(i * 7 + 12));
+        let len = 26.0 + hash(i * 7 + 13) * 30.0;
+        let x = rect.left() + ((hx * rect.width() + t * 60.0) % (rect.width() + len)) - len;
+        let y = rect.top() + 20.0 + hy * (rect.height() - 70.0);
+        let a = (alpha * (0.35 + 0.5 * hash(i * 7 + 14)) * 255.0) as u8;
+        p.line_segment([pos2(x, y), pos2(x + len, y)], Stroke::new(1.6, c(255, 255, 255, a)));
+    }
+}
+
+fn drifts(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let base = taskbar(p, rect, pal);
+    wind_streaks(p, rect, t, 0.8);
+    snow_bank(p, rect.left(), rect.right(), base, pal, |x| 6.0 + 38.0 * drift_shape(x - rect.left(), t));
+}
+
+fn depth(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let base = taskbar(p, rect, pal);
+    // The setting slowly goes up and down; the snow follows.
+    let v = 0.3 + 0.7 * ease(t * 0.11);
+    let max_h = 64.0 * v;
+    snow_bank(p, rect.left(), rect.right(), base, pal, |x| max_h * (0.35 + 0.65 * drift_shape(x - rect.left(), 0.0)));
+    // A ruler at the highest hill.
+    let peak_x = (0..120).map(|i| rect.left() + 20.0 + i as f32 * 4.0).fold(rect.left(), |best, x| {
+        if drift_shape(x - rect.left(), 0.0) > drift_shape(best - rect.left(), 0.0) {
+            x
+        } else {
+            best
+        }
+    });
+    let top = base - max_h;
+    let rx = peak_x + 16.0;
+    let ruler = Stroke::new(1.6, pal.accent.lerp_to_gamma(WHITE, 0.15));
+    p.line_segment([pos2(rx, top), pos2(rx, base - 2.0)], ruler);
+    for y in [top, base - 2.0] {
+        p.line_segment([pos2(rx - 5.0, y), pos2(rx + 5.0, y)], ruler);
+    }
+    // The slider, in a frosted panel.
+    let panel = Rect::from_center_size(pos2(rect.center().x, rect.top() + 34.0), vec2(250.0, 36.0));
+    p.rect_filled(panel, 18, c(8, 24, 52, if pal.dark { 120 } else { 80 }));
+    let (x0, x1, y) = (panel.left() + 40.0, panel.right() - 22.0, panel.center().y);
+    icons::snowflake(p, pos2(panel.left() + 21.0, y), 8.0, t * 0.2, WHITE, 1.6);
+    p.line_segment([pos2(x0, y), pos2(x1, y)], Stroke::new(4.0, c(255, 255, 255, 90)));
+    let knob = pos2(x0 + (x1 - x0) * v, y);
+    p.line_segment([pos2(x0, y), knob], Stroke::new(4.0, pal.accent));
+    p.circle_filled(knob, 9.0, WHITE);
+    p.circle_stroke(knob, 9.0, Stroke::new(1.0, c(0, 0, 0, 40)));
+}
+
+fn smooth(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let cx = rect.center().x;
+    let g = ground(rect);
+    // Weather off, decorations still moving smoothly.
+    let tree = snowy_core::props::TreeLook { lights: 2, ornaments: 3, topper: 1, garland: 1 };
+    let mut out = Vec::new();
+    snowy_art::tree(&tree, [cx - 110.0, g + 2.0], 118.0, 1.0, t, &mut out);
+    paint_prims(p, &out, &Transform { scale: 1.0, offset: Vec2::ZERO });
+    snowman(p, pos2(cx - 20.0, g), 100.0, t);
+    // "Weather off" badge: a crossed-out snowflake.
+    let b = pos2(cx + 92.0, rect.top() + 44.0);
+    p.circle_filled(b, 19.0, c(8, 24, 52, if pal.dark { 120 } else { 80 }));
+    icons::snowflake(p, b, 10.0, 0.0, c(255, 255, 255, 200), 1.6);
+    p.line_segment([b + vec2(-12.0, 12.0), b + vec2(12.0, -12.0)], Stroke::new(2.4, c(255, 120, 120, 240)));
+    // Frame-rate pill with a steady, smooth meter.
+    let pill = Rect::from_center_size(pos2(cx + 150.0, rect.top() + 44.0), vec2(84.0, 30.0));
+    p.rect_filled(pill, 15, c(70, 190, 130, 255));
+    p.text(pill.center(), Align2::CENTER_CENTER, "60 FPS", semibold(13.5), WHITE);
+    let graph = Rect::from_center_size(pos2(cx + 121.0, rect.top() + 98.0), vec2(150.0, 40.0));
+    p.rect_filled(graph, 8, c(8, 24, 52, if pal.dark { 110 } else { 70 }));
+    let mut pts = Vec::new();
+    for i in 0..=30 {
+        let f = i as f32 / 30.0;
+        let wobble = ((t * 3.0 + f * 9.0).sin() * 1.2).round() * 0.5;
+        pts.push(pos2(graph.left() + 8.0 + f * (graph.width() - 16.0), graph.center().y + wobble));
+    }
+    p.add(Shape::line(pts, Stroke::new(2.0, c(120, 230, 170, 255))));
 }

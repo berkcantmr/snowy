@@ -97,7 +97,8 @@ fn main() -> anyhow::Result<()> {
         return snowy_settings::run_page(snowy_sys::monitors(), page);
     }
     if args.iter().any(|a| a == "--whats-new") {
-        return snowy_settings::run_whats_new();
+        let since = args.iter().position(|a| a == "--since").and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+        return snowy_settings::run_whats_new(&since);
     }
     if let Some(i) = args.iter().position(|a| a == "--edit") {
         let monitor = args.get(i + 1).cloned().unwrap_or_default();
@@ -1098,7 +1099,7 @@ fn maybe_show_whats_new(mut s: Settings) -> Settings {
     if used_before && upgraded {
         if let Ok(exe) = std::env::current_exe() {
             log::info!("showing what's new ({} -> {current})", s.last_seen_version);
-            spawn_child(std::process::Command::new(exe).arg("--whats-new"));
+            spawn_child(std::process::Command::new(exe).arg("--whats-new").arg("--since").arg(&s.last_seen_version));
         }
     }
     s.last_seen_version = current.to_string();
