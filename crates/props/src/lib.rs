@@ -259,6 +259,8 @@ pub struct Layer {
     next_visit: f32,
     drop: Option<Drop>,
     gift: Option<Gift>,
+    /// Gifts from friends waiting for the current gift to be opened.
+    pending_gifts: u32,
     gift_zone: Option<[f32; 4]>,
     uptime: f32,
     day_check: f32,
@@ -345,6 +347,7 @@ impl Layer {
             next_visit: 1500.0 + fastrand::f32() * 1500.0,
             drop: None,
             gift: None,
+            pending_gifts: 0,
             gift_zone: None,
             uptime: 0.0,
             day_check: 0.0,
@@ -370,8 +373,13 @@ impl Layer {
     /// A friend sent a gift: one floats down now (primary screen only; at most one at a time).
     /// Returns false when it can't be shown here.
     pub fn drop_gift(&mut self) -> bool {
-        if !self.primary || self.gift.is_some() {
+        if !self.primary {
             return false;
+        }
+        if self.gift.is_some() {
+            // One at a time: this one comes down once the current box is opened.
+            self.pending_gifts = (self.pending_gifts + 1).min(5);
+            return true;
         }
         let sc = self.sc();
         let x = self.free_spot(SNOWMAN_H * 0.6) * self.width;
@@ -773,6 +781,10 @@ impl Layer {
 
     fn update_gift(&mut self, dt: f32) {
         let sc = self.sc();
+        if self.primary && self.gift.is_none() && self.pending_gifts > 0 {
+            self.pending_gifts -= 1;
+            self.drop_gift();
+        }
         if self.primary {
             self.uptime += dt;
             if self.gift.is_none() && self.uptime >= GIFT_DELAY {
