@@ -40,6 +40,9 @@ struct App {
     friends_rev: u64,
     /// When each friend last did each kind of action here (receiver-side rate limit).
     friend_actions: std::collections::HashMap<(String, snowy_net::state::ActionKind), Instant>,
+    /// The snowball notice on screen: from whom, how many so far, when the last one came.
+    /// Snowballs from the same friend in quick succession update one notice ("threw 5").
+    snowball_notice: Option<(String, u32, Instant)>,
     /// A usage ping is being sent right now.
     usage_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     settings_mtime: Option<SystemTime>,
@@ -134,6 +137,7 @@ fn main() -> anyhow::Result<()> {
         friends: None,
         friends_rev: 0,
         friend_actions: std::collections::HashMap::new(),
+        snowball_notice: None,
         usage_busy: Default::default(),
         screens: Vec::new(),
         active: None,
@@ -689,23 +693,32 @@ impl App {
             }
             self.friend_actions.insert(key, Instant::now());
             let name = names.get(&from).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| from.clone());
-            let text_key = match action {
+            let text = match action {
                 Action::Snowball { x } => {
                     if self.is_running() {
                         if let Some(e) = self.primary_screen().and_then(|s| s.effect.as_mut()) {
                             e.incoming_snowball(x);
                         }
                     }
-                    "toast.friend_snowball"
+                    let n = match &self.snowball_notice {
+                        Some((who, n, t)) if *who == from && t.elapsed() < Duration::from_secs(8) => n + 1,
+                        _ => 1,
+                    };
+                    self.snowball_notice = Some((from.clone(), n, Instant::now()));
+                    if n == 1 {
+                        i18n::t(&lang, "toast.friend_snowball").replace("{name}", &name)
+                    } else {
+                        i18n::t(&lang, "toast.friend_snowballs").replace("{name}", &name).replace("{n}", &n.to_string())
+                    }
                 }
                 Action::Gift => {
                     if let Some(s) = self.primary_screen() {
                         s.props.drop_gift();
                     }
-                    "toast.friend_gift"
+                    self.snowball_notice = None;
+                    i18n::t(&lang, "toast.friend_gift").replace("{name}", &name)
                 }
             };
-            let text = i18n::t(&lang, text_key).replace("{name}", &name);
             if let Some(t) = &mut self.toast {
                 t.show(snowy_sys::ToastIcon::Friend, &text, &[], None);
             }

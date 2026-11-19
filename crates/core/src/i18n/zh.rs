@@ -250,6 +250,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "friends.allow_gifts" => "接受礼物",
         "friends.err.slow_down" => "请稍等片刻再发送。",
         "toast.friend_snowball" => "{name} 向你扔了一个雪球！",
+        "toast.friend_snowballs" => "{name} 向你扔了 {n} 个雪球！",
         "toast.friend_gift" => "{name} 给你送了一份礼物！",
         "friends.remove" => "移除",
         "friends.sure" => "确定？",

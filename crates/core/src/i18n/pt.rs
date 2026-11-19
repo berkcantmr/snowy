@@ -250,6 +250,7 @@ pub fn get(key: &str) -> Option<&'static str> {
         "friends.allow_gifts" => "Aceitar presentes",
         "friends.err.slow_down" => "Espere um pouco antes de enviar outro.",
         "toast.friend_snowball" => "{name} jogou uma bola de neve em você!",
+        "toast.friend_snowballs" => "{name} jogou {n} bolas de neve em você!",
         "toast.friend_gift" => "{name} enviou um presente para você!",
         "friends.remove" => "Remover",
         "friends.sure" => "Tem certeza?",
