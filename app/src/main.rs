@@ -96,6 +96,9 @@ fn main() -> anyhow::Result<()> {
         let page = args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).map(String::as_str);
         return snowy_settings::run_page(snowy_sys::monitors(), page);
     }
+    if args.iter().any(|a| a == "--whats-new") {
+        return snowy_settings::run_whats_new();
+    }
     if let Some(i) = args.iter().position(|a| a == "--edit") {
         let monitor = args.get(i + 1).cloned().unwrap_or_default();
         let id = args.get(i + 2).and_then(|s| s.parse().ok()).unwrap_or(0);

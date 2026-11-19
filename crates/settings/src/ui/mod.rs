@@ -6,6 +6,7 @@ pub mod icons;
 pub mod pages;
 pub mod theme;
 pub mod wallpapers;
+pub mod whats_new_art;
 
 use eframe::egui::{self, pos2, vec2, Align, Color32, Layout, Rect, RichText, Sense};
 use theme::Palette;
