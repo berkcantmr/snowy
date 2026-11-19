@@ -13,8 +13,13 @@ const MAX_THROW: f32 = 3000.0;
 const STACK_WAIT: f32 = 1.5;
 /// A ball may sit on one at most this much smaller than itself.
 const STACK_RATIO: f32 = 1.05;
-/// How far a resting ball sinks into the snow, as a fraction of its radius.
-const SINK: f32 = 0.15;
+/// How deep a resting ball sinks into snow `snow` px deep: bigger (heavier) balls squash it
+/// more, from 8 % of the radius for the smallest to 28 % for the biggest, but never below
+/// the snow itself.
+fn sink(r: f32, sc: f32, snow: f32) -> f32 {
+    let t = ((r / sc.max(0.01) - 6.0) / 34.0).clamp(0.0, 1.0);
+    (r * (0.08 + 0.20 * t)).min(snow.max(0.0))
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BState {
@@ -455,7 +460,8 @@ impl Snowballs {
         // Resting balls press into the snow: nothing piles up inside them.
         for b in &self.balls {
             if let BState::Rest { id, y } = b.state {
-                piles.press(id, y, b.x, b.y, b.r, b.r * SINK);
+                let snow = piles.height_under(id, y, b.x).unwrap_or(0.0);
+                piles.press(id, y, b.x, b.y, b.r, sink(b.r, sc, snow));
             }
         }
         // Chunks.
@@ -594,7 +600,7 @@ fn step_ball(
                 if b.x < q.x0 || b.x > q.x1 {
                     b.state = BState::Free;
                 } else {
-                    b.y = q.top_at(b.x) - b.r * (1.0 - SINK);
+                    b.y = q.top_at(b.x) - b.r + sink(b.r, sc, q.height_at(b.x));
                     return true;
                 }
             }
@@ -682,6 +688,66 @@ mod tests {
 
     fn ball(id: u32, x: f32, y: f32, vx: f32, vy: f32, r: f32, state: BState) -> Ball {
         Ball { id, x, y, vx, vy, r, rot: 0.0, state, fixed: true, rel: false, timer: 0.0 }
+    }
+
+    #[test]
+    fn bigger_balls_squash_the_snow_more() {
+        // Same snow, a small and a big ball: the big one sits deeper (in px and in share of
+        // its size), and neither goes below the snow.
+        let small = sink(8.0, 1.0, 20.0);
+        let big = sink(36.0, 1.0, 20.0);
+        assert!(big > small * 3.0, "{small} {big}");
+        assert!(big / 36.0 > small / 8.0);
+        assert!(sink(36.0, 1.0, 2.0) <= 2.0, "thin snow: no deeper than the snow");
+        assert_eq!(sink(36.0, 1.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn a_resting_ball_pushes_a_rim_of_snow_up_around_it() {
+        let mut piles = Piles::default();
+        let mut rng = Rng::with_seed(4);
+        piles.update(0.016, 0.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+        // An even 12 px layer.
+        for c in piles.piles[0].cols.iter_mut() {
+            *c = 12.0;
+        }
+        let r = 30.0;
+        let s = sink(r, 1.0, 12.0);
+        let cy = 1000.0 - 12.0 - r + s;
+        piles.press(GROUND_ID, 1000.0, 600.0, cy, r, s);
+        let h = |x: f32| piles.piles[0].height_at(x);
+        assert!((h(600.0) - 12.0).abs() < 0.3, "the ball rests on the snow under it");
+        assert!(h(600.0 + r * 0.5) < 12.0, "squashed under its lower sides");
+        assert!(h(600.0 + r * 1.1) > 12.0 && h(600.0 - r * 1.1) > 12.0, "rim on both sides");
+        assert!((h(900.0) - 12.0).abs() < 1e-3, "far away untouched");
+    }
+
+    #[test]
+    fn a_resting_ball_stays_put_for_minutes() {
+        let mut piles = Piles::default();
+        let mut rng = Rng::with_seed(9);
+        piles.update(0.016, 0.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+        for c in piles.piles[0].cols.iter_mut() {
+            *c = 15.0;
+        }
+        let mut sb = Snowballs::default();
+        let rest = BState::Rest { id: GROUND_ID, y: 1000.0 };
+        sb.balls.push(ball(1, 800.0, 1000.0 - 15.0 - 25.0, 0.0, 0.0, 25.0, rest));
+        let scene = scene_with(None, Some(1000.0));
+        let mut ys = Vec::new();
+        for frame in 0..(120.0 / 0.016) as usize {
+            piles.update(0.016, 0.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+            sb.update(0.016, &scene, &mut piles, 1.0, 1920.0, 1080.0, &mut rng);
+            if frame % 600 == 0 {
+                ys.push(sb.balls[0].y);
+            }
+        }
+        let (lo, hi) = ys.iter().fold((f32::MAX, f32::MIN), |(a, b), &y| (a.min(y), b.max(y)));
+        assert!(hi - lo < 3.0, "the ball drifted: {ys:?}");
+        // It sits sunk into the snow: its bottom is below the snow top beside it.
+        let b = sb.balls[0];
+        let beside = piles.piles[0].top_at(b.x + b.r * 1.3);
+        assert!(b.y + b.r > beside, "{} vs {beside}", b.y + b.r);
     }
 
     #[test]

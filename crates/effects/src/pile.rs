@@ -28,6 +28,9 @@ pub struct Pile {
     caps: Vec<f32>,
     /// Pixel scale (1.0 at 1080p), so drifts are the same size on every screen.
     sc: f32,
+    /// Columns under resting balls this frame: smoothing leaves them alone, so a ball's
+    /// footing doesn't wear away under it.
+    frozen: Vec<usize>,
 }
 
 /// Smooth value noise in 0..1 along x (`seed` picks the pattern).
@@ -68,6 +71,7 @@ impl Pile {
             cols: vec![0.0; n],
             caps: vec![max_h; n],
             sc: if sc.is_finite() { sc.max(0.01) } else { 1.0 },
+            frozen: Vec::new(),
         };
         p.reshape(0.0);
         p
@@ -143,17 +147,60 @@ impl Pile {
             return;
         }
         let (a, b) = (self.col(cx - r), self.col(cx + r));
+        let mut pushed = 0.0;
         for i in a..=b {
             let x = self.x0 + (i as f32 + 0.5) * self.colw;
             let dx = x - cx;
             if dx.abs() >= r {
                 continue;
             }
-            let bottom = cy + (r * r - dx * dx).sqrt() - sink;
+            if !self.frozen.contains(&i) {
+                self.frozen.push(i);
+            }
+            // The ball stands on the middle column, sunk `sink` into it (that snow hides
+            // behind the ball and keeps it up); everywhere else under it the snow is squashed
+            // down to the ball's outline.
+            let sunk = if dx.abs() < self.colw { sink } else { 0.0 };
+            let bottom = cy + (r * r - dx * dx).sqrt() - sunk;
             let max_h = (self.y - bottom).max(0.0);
             if self.cols[i] > max_h {
+                pushed += self.cols[i] - max_h;
                 self.cols[i] = max_h;
             }
+        }
+        // The squashed snow is pushed out to the sides: a little rim around the ball.
+        if pushed > 0.0 {
+            self.heap_around(cx, r, pushed * 0.6);
+        }
+    }
+
+    /// Adds `amount` (total height) just outside a ball of radius r at cx, most of it
+    /// right at the edge, without going over each column's cap.
+    fn heap_around(&mut self, cx: f32, r: f32, amount: f32) {
+        let n = self.cols.len();
+        let (lo, hi) = (r, r * 1.6);
+        let mut slots: Vec<(usize, f32)> = Vec::new();
+        for side in [-1.0f32, 1.0] {
+            let mut d = lo;
+            while d < hi {
+                let x = cx + side * (d + self.colw * 0.5);
+                if x >= self.x0 && x <= self.x1 {
+                    let i = self.col(x);
+                    if i < n && !slots.iter().any(|(j, _)| *j == i) {
+                        // Falls off linearly from the ball's edge.
+                        slots.push((i, 1.0 - (d - lo) / (hi - lo)));
+                    }
+                }
+                d += self.colw;
+            }
+        }
+        let total: f32 = slots.iter().map(|(_, w)| w).sum();
+        if total <= 0.0 {
+            return;
+        }
+        for (i, w) in slots {
+            let add = amount * w / total;
+            self.cols[i] = (self.cols[i] + add).min(self.caps[i].max(self.cols[i]));
         }
     }
 
@@ -212,10 +259,13 @@ impl Pile {
             let cur = fill(self, i);
             let next = if i + 1 < n { fill(self, i + 1) } else { cur };
             let left = if i == 0 { cur } else { prev };
+            prev = cur;
+            if self.frozen.contains(&i) {
+                continue;
+            }
             let f = (cur + k * (left + next - 2.0 * cur)).clamp(0.0, 1.0);
             let excess = (self.cols[i] - self.caps[i]).max(0.0);
             self.cols[i] = f * self.caps[i] + excess;
-            prev = cur;
         }
     }
 }
@@ -329,6 +379,11 @@ impl Piles {
         }
     }
 
+    /// Snow height under x on the pile with surface `id` at line `y`.
+    pub fn height_under(&self, id: u64, y: f32, x: f32) -> Option<f32> {
+        self.piles.iter().find(|p| p.id == id && (p.y - y).abs() <= 2.0).map(|p| p.height_at(x))
+    }
+
     /// Maximum ground snow height in pixels at 1080p (ledges get half), within DEPTH_RANGE.
     pub fn set_depth(&mut self, depth: f32) {
         let d = if depth.is_finite() { depth.clamp(DEPTH_RANGE.0, DEPTH_RANGE.1) } else { DEFAULT_DEPTH };
@@ -382,6 +437,8 @@ impl Piles {
         for p in &mut self.piles {
             p.diffuse(k);
             p.settle(melt);
+            // Resting balls mark their columns again after this update.
+            p.frozen.clear();
         }
         // Falling clumps.
         let mut i = 0;
@@ -636,9 +693,10 @@ mod tests {
         let cy = 500.0 - 20.0 - r + sink;
         p.press(cx, cy, r, sink);
         assert!((p.height_at(cx) - 20.0).abs() < 0.2, "{}", p.height_at(cx));
-        // Away from the ball the snow is untouched; at its sides it can still reach up.
+        // Squashed under the ball next to where it stands, a rim just outside, untouched far away.
+        assert!(p.height_at(cx + 12.0) < 20.0, "{}", p.height_at(cx + 12.0));
+        assert!(p.height_at(cx + r + 2.0) > 20.0, "{}", p.height_at(cx + r + 2.0));
         assert_eq!(p.height_at(100.0), 20.0);
-        assert_eq!(p.height_at(cx + 28.0), 20.0);
         // Snow can't grow up through the ball.
         for _ in 0..200 {
             p.add(cx, 3.0);
