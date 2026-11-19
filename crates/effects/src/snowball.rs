@@ -183,6 +183,86 @@ impl Snowballs {
         });
     }
 
+    /// Balls bump into each other: overlapping pairs are pushed apart (heavier = bigger moves
+    /// less) and bounce along the line between their centres. A resting ball that gets hit
+    /// rolls away along the snow; one held by the cursor, stacked, or carrying a stack doesn't
+    /// move. A hard enough hit bursts the flying ball.
+    fn collide(&mut self, sc: f32, rng: &mut Rng) {
+        const BOUNCE: f32 = 0.45;
+        let n = self.balls.len();
+        let mut burst: Vec<usize> = Vec::new();
+        for i in 0..n {
+            for j in i + 1..n {
+                let (a, b) = (self.balls[i], self.balls[j]);
+                let (dx, dy) = (b.x - a.x, b.y - a.y);
+                let min = a.r + b.r;
+                let d2 = dx * dx + dy * dy;
+                if d2 >= min * min || d2 < 1e-6 {
+                    continue;
+                }
+                // How freely each one moves: 0 = fixed, else 1 / mass (mass ~ area).
+                let inv = |q: &Ball, k: usize| -> f32 {
+                    let fixed = matches!(q.state, BState::Held | BState::Stacked { .. }) || self.carries(self.balls[k].id).is_some();
+                    if fixed {
+                        0.0
+                    } else {
+                        1.0 / (q.r * q.r).max(1.0)
+                    }
+                };
+                let (ia, ib) = (inv(&a, i), inv(&b, j));
+                if ia + ib == 0.0 {
+                    continue;
+                }
+                let d = d2.sqrt();
+                let (nx, ny) = (dx / d, dy / d);
+                // Push apart. Resting balls only slide sideways (the snow holds them up).
+                let overlap = min - d;
+                let (sa, sb) = (overlap * ia / (ia + ib), overlap * ib / (ia + ib));
+                let rest = |q: &Ball| matches!(q.state, BState::Rest { .. });
+                {
+                    let q = &mut self.balls[i];
+                    q.x -= nx * sa;
+                    if !rest(&a) {
+                        q.y -= ny * sa;
+                    }
+                }
+                {
+                    let q = &mut self.balls[j];
+                    q.x += nx * sb;
+                    if !rest(&b) {
+                        q.y += ny * sb;
+                    }
+                }
+                // Bounce: only when moving towards each other.
+                let rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+                if rel >= 0.0 {
+                    continue;
+                }
+                if -rel > BREAK_SPEED * sc {
+                    for (k, q) in [(i, a), (j, b)] {
+                        if q.state == BState::Free && !burst.contains(&k) {
+                            burst.push(k);
+                        }
+                    }
+                    continue;
+                }
+                let imp = -(1.0 + BOUNCE) * rel / (ia + ib);
+                for (k, sign, w) in [(i, -1.0, ia), (j, 1.0, ib)] {
+                    let q = &mut self.balls[k];
+                    q.vx += sign * imp * w * nx;
+                    if !matches!(q.state, BState::Rest { .. }) {
+                        q.vy += sign * imp * w * ny;
+                    }
+                }
+            }
+        }
+        burst.sort_unstable();
+        for k in burst.into_iter().rev() {
+            let b = self.balls.remove(k);
+            break_ball(&b, b.x, b.y, sc, &mut self.chunks, rng);
+        }
+    }
+
     fn find(&self, id: u32) -> Option<usize> {
         self.balls.iter().position(|b| b.id == id)
     }
@@ -371,6 +451,7 @@ impl Snowballs {
             }
         }
         self.stack_pass(dt, sc, rng);
+        self.collide(sc, rng);
         // Resting balls press into the snow: nothing piles up inside them.
         for b in &self.balls {
             if let BState::Rest { id, y } = b.state {
@@ -597,6 +678,52 @@ mod tests {
         assert!(sb.balls[0].r > 12.0);
         let after: f32 = piles.piles[0].cols.iter().sum();
         assert!(after < before);
+    }
+
+    fn ball(id: u32, x: f32, y: f32, vx: f32, vy: f32, r: f32, state: BState) -> Ball {
+        Ball { id, x, y, vx, vy, r, rot: 0.0, state, fixed: true, rel: false, timer: 0.0 }
+    }
+
+    #[test]
+    fn flying_balls_bounce_off_each_other() {
+        let mut sb = Snowballs::default();
+        let mut rng = Rng::with_seed(1);
+        // Head-on, equal size, overlapping a little.
+        sb.balls.push(ball(1, 100.0, 500.0, 300.0, 0.0, 10.0, BState::Free));
+        sb.balls.push(ball(2, 118.0, 500.0, -300.0, 0.0, 10.0, BState::Free));
+        sb.collide(1.0, &mut rng);
+        let (a, b) = (sb.balls[0], sb.balls[1]);
+        assert!(a.vx < 0.0 && b.vx > 0.0, "they bounce back: {} {}", a.vx, b.vx);
+        assert!((b.x - a.x) >= 20.0 - 1e-3, "no longer overlapping");
+        // Momentum is kept (equal masses: velocities sum to zero).
+        assert!((a.vx + b.vx).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_rolling_ball_knocks_a_resting_one_along() {
+        let mut sb = Snowballs::default();
+        let mut rng = Rng::with_seed(1);
+        let rest = BState::Rest { id: GROUND_ID, y: 1000.0 };
+        sb.balls.push(ball(1, 100.0, 980.0, 200.0, 0.0, 20.0, BState::Free));
+        sb.balls.push(ball(2, 130.0, 985.0, 0.0, 0.0, 15.0, rest));
+        let y_before = sb.balls[1].y;
+        sb.collide(1.0, &mut rng);
+        let hit = sb.balls[1];
+        assert!(hit.vx > 0.0, "pushed to the right: {}", hit.vx);
+        assert_eq!(hit.y, y_before, "a resting ball stays on the snow");
+        assert!(sb.balls[0].vx < 200.0);
+    }
+
+    #[test]
+    fn a_hard_hit_bursts_the_flying_ball_and_held_ones_dont_move() {
+        let mut sb = Snowballs::default();
+        let mut rng = Rng::with_seed(1);
+        sb.balls.push(ball(1, 100.0, 500.0, 0.0, 0.0, 12.0, BState::Held));
+        sb.balls.push(ball(2, 120.0, 500.0, -2000.0, 0.0, 10.0, BState::Free));
+        sb.collide(1.0, &mut rng);
+        assert_eq!(sb.balls.len(), 1, "the fast one burst");
+        assert_eq!((sb.balls[0].x, sb.balls[0].state), (100.0, BState::Held));
+        assert!(sb.chunk_count() > 0);
     }
 
     #[test]

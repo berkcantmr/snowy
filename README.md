@@ -11,6 +11,9 @@ living on the taskbar edge.
 - Tray icon with quick controls
 - Settings window and editor (same executable, launched with flags)
 - Optional "Match my weather" mode that mirrors your current local weather
+- Friends (optional): add friends by code, throw snowballs and send gifts to each other, or
+  share a desktop and arrange the decorations together. Messages between friends are
+  end-to-end encrypted; the small server that connects friends is in `server/`.
 - Per-monitor-v2 DPI aware
 
 ## Build

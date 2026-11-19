@@ -4,11 +4,14 @@
 //! picture. Someone who skipped releases sees the highlights of every one they missed.
 
 /// The newest release with highlights.
-pub const VERSION: &str = "0.1.5";
+pub const VERSION: &str = "0.1.6";
 
 /// Which custom-drawn picture goes on top of a highlight card (see `ui::whats_new_art`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preview {
+    Friends,
+    Throw,
+    SharedDesk,
     Drifts,
     Depth,
     Smooth,
@@ -30,6 +33,9 @@ pub struct Highlight {
 
 /// Newest first.
 const HIGHLIGHTS: &[Highlight] = &[
+    Highlight { version: "0.1.6", preview: Preview::Friends, title: "whats_new.friends.title", body: "whats_new.friends.body" },
+    Highlight { version: "0.1.6", preview: Preview::Throw, title: "whats_new.throw.title", body: "whats_new.throw.body" },
+    Highlight { version: "0.1.6", preview: Preview::SharedDesk, title: "whats_new.shared.title", body: "whats_new.shared.body" },
     Highlight { version: "0.1.5", preview: Preview::Drifts, title: "whats_new.drifts.title", body: "whats_new.drifts.body" },
     Highlight { version: "0.1.5", preview: Preview::Depth, title: "whats_new.depth.title", body: "whats_new.depth.body" },
     Highlight { version: "0.1.5", preview: Preview::Smooth, title: "whats_new.smooth.title", body: "whats_new.smooth.body" },
@@ -81,7 +87,9 @@ mod tests {
     fn skipped_releases_are_included() {
         let n = |v: &str| highlights_since(v).len();
         let newest = highlights().iter().filter(|h| h.version == VERSION).count();
-        assert_eq!(n("0.1.4"), newest);
+        // The release before the newest one sees only the newest cards.
+        let previous = highlights().iter().map(|h| h.version).find(|v| *v != VERSION).unwrap();
+        assert_eq!(n(previous), newest);
         assert_eq!(n("0.1.3"), highlights().len());
         assert_eq!(n(""), newest);
         assert_eq!(n("garbage"), newest);

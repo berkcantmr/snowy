@@ -25,6 +25,9 @@ pub fn paint(painter: &Painter, rect: Rect, preview: Preview, t: f32, pal: &Pale
         flakes(&p, rect, t, pal);
     }
     match preview {
+        Preview::Friends => friends(&p, rect, t, pal),
+        Preview::Throw => throw(&p, rect, t, pal),
+        Preview::SharedDesk => shared_desk(&p, rect, t, pal),
         Preview::Drifts => drifts(&p, rect, t, pal),
         Preview::Depth => depth(&p, rect, t, pal),
         Preview::Smooth => smooth(&p, rect, t, pal),
@@ -542,4 +545,120 @@ fn smooth(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
         pts.push(pos2(graph.left() + 8.0 + f * (graph.width() - 16.0), graph.center().y + wobble));
     }
     p.add(Shape::line(pts, Stroke::new(2.0, c(120, 230, 170, 255))));
+}
+
+// ---------------------------------------------------------------- 0.1.6
+
+/// A small monitor with a desktop and a taskbar; returns the screen area above the taskbar.
+fn mini_screen(p: &Painter, center: Pos2, size: Vec2, pal: &Palette) -> Rect {
+    let (frame, top, bot) = if pal.dark {
+        (c(26, 34, 50, 255), c(58, 92, 138, 255), c(84, 124, 176, 255))
+    } else {
+        (c(58, 76, 104, 255), c(150, 190, 236, 255), c(196, 220, 246, 255))
+    };
+    let bezel = Rect::from_center_size(center, size);
+    p.rect_filled(Rect::from_center_size(pos2(center.x, bezel.bottom() + 4.0), vec2(26.0, 8.0)), 2, frame);
+    p.rect_filled(Rect::from_center_size(pos2(center.x, bezel.bottom() + 8.5), vec2(56.0, 4.0)), 2, frame);
+    p.rect_filled(bezel, 8, frame);
+    let screen = bezel.shrink(4.0);
+    gradient_rect(p, screen, 4.0, top, bot);
+    let bar = Rect::from_min_max(pos2(screen.left(), screen.bottom() - 8.0), screen.right_bottom());
+    p.rect_filled(bar, CornerRadius { nw: 0, ne: 0, sw: 4, se: 4 }, c(12, 20, 36, 200));
+    Rect::from_min_max(screen.min, pos2(screen.right(), bar.top()))
+}
+
+/// A person: round head and shoulders.
+fn person(p: &Painter, center: Pos2, r: f32, color: Color32) {
+    p.circle_filled(center + vec2(0.0, -r * 0.55), r * 0.42, color);
+    let body = Rect::from_center_size(center + vec2(0.0, r * 0.45), vec2(r * 1.5, r * 0.85));
+    p.rect_filled(body, CornerRadius { nw: (r * 0.7) as u8, ne: (r * 0.7) as u8, sw: 2, se: 2 }, color);
+}
+
+fn friends(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let cx = rect.center().x;
+    let cy = rect.top() + 64.0;
+    let green = c(70, 190, 120, 255);
+    // Two people far apart, each with an online dot.
+    for (dx, phase) in [(-150.0, 0.0), (150.0, 1.3)] {
+        let at = pos2(cx + dx, cy + (t * 1.6 + phase).sin() * 2.0);
+        p.circle_filled(at, 30.0, c(8, 24, 52, if pal.dark { 110 } else { 70 }));
+        person(p, at, 20.0, WHITE);
+        p.circle_filled(at + vec2(21.0, 20.0), 7.0, if pal.dark { c(26, 34, 50, 255) } else { WHITE });
+        p.circle_filled(at + vec2(21.0, 20.0), 5.0, green);
+    }
+    // A dotted link with sparks travelling both ways.
+    let (a, b) = (pos2(cx - 112.0, cy), pos2(cx + 112.0, cy));
+    let mut x = a.x;
+    while x < b.x {
+        p.circle_filled(pos2(x, cy), 1.6, c(255, 255, 255, 150));
+        x += 9.0;
+    }
+    for k in 0..2 {
+        let f = (t * 0.45 + k as f32 * 0.5).rem_euclid(1.0);
+        let (from, to) = if k == 0 { (a, b) } else { (b, a) };
+        icons::snowflake(p, from + (to - from) * f, 6.0, t, WHITE.gamma_multiply((f * std::f32::consts::PI).sin()), 1.5);
+    }
+    // The friend code in the middle.
+    let pill = Rect::from_center_size(pos2(cx, cy + 42.0), vec2(112.0, 28.0));
+    p.rect_filled(pill, 14, pal.accent);
+    p.text(pill.center(), Align2::CENTER_CENTER, "KAR-7F3Q", eframe::egui::FontId::monospace(14.0), pal.on_accent);
+}
+
+fn throw(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let cx = rect.center().x;
+    let left = mini_screen(p, pos2(cx - 128.0, rect.top() + 62.0), vec2(170.0, 104.0), pal);
+    let right = mini_screen(p, pos2(cx + 128.0, rect.top() + 62.0), vec2(170.0, 104.0), pal);
+    // A snowball leaves the left screen and lands on the right one, then a gift floats down.
+    let cycle = 3.2;
+    let k = (t / cycle).floor() as i32;
+    let f = (t / cycle).fract();
+    if k % 2 == 0 {
+        let from = pos2(left.center().x + 20.0, left.center().y);
+        let to = pos2(right.center().x - 10.0, right.bottom() - 9.0);
+        let g = (f * 1.3).min(1.0);
+        let pos = from + (to - from) * g + vec2(0.0, -60.0 * 4.0 * g * (1.0 - g));
+        let r = 7.0;
+        p.circle_filled(pos + vec2(1.0, 1.5), r, c(0, 20, 50, 50));
+        p.circle_filled(pos, r, WHITE);
+        p.circle_filled(pos + vec2(-2.0, -2.0), r * 0.35, c(220, 232, 248, 255));
+        cursor(p, pos2(from.x - 30.0, from.y + 6.0));
+    } else {
+        let g = (f * 1.4).min(1.0);
+        let base = pos2(right.center().x - 18.0, right.top() + 6.0 + (right.height() - 22.0) * g);
+        if g < 1.0 {
+            p.circle_filled(base + vec2(0.0, -16.0), 9.0, c(240, 110, 100, 255));
+            p.line_segment([base + vec2(-8.0, -14.0), base + vec2(-4.0, -4.0)], Stroke::new(1.0, WHITE));
+            p.line_segment([base + vec2(8.0, -14.0), base + vec2(4.0, -4.0)], Stroke::new(1.0, WHITE));
+        }
+        let box_ = Rect::from_center_size(base + vec2(0.0, 2.0), vec2(14.0, 12.0));
+        p.rect_filled(box_, 2, c(226, 70, 70, 255));
+        p.rect_filled(Rect::from_center_size(box_.center(), vec2(3.0, 12.0)), 0, c(250, 210, 90, 255));
+    }
+    // The notice on the receiving side.
+    let bubble = Rect::from_min_size(pos2(right.right() - 66.0, right.top() + 6.0), vec2(60.0, 20.0));
+    p.rect_filled(bubble, 6, if pal.dark { c(30, 38, 54, 240) } else { c(255, 255, 255, 240) });
+    person(p, bubble.left_center() + vec2(10.0, 1.0), 6.0, pal.accent);
+    p.rect_filled(Rect::from_min_size(bubble.left_top() + vec2(20.0, 6.0), vec2(32.0, 3.0)), 1, pal.text_weak);
+    p.rect_filled(Rect::from_min_size(bubble.left_top() + vec2(20.0, 12.0), vec2(22.0, 3.0)), 1, pal.text_weak);
+}
+
+fn shared_desk(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let cx = rect.center().x;
+    // The same decorations on both screens; the snowman walks in step on both.
+    let x = 0.3 + 0.4 * ease(t * 0.12);
+    for dx in [-128.0, 128.0] {
+        let s = mini_screen(p, pos2(cx + dx, rect.top() + 62.0), vec2(170.0, 104.0), pal);
+        let g = s.bottom();
+        let tree = snowy_core::props::TreeLook { lights: 2, ornaments: 1, topper: 1, garland: 1 };
+        let mut out = Vec::new();
+        snowy_art::tree(&tree, [s.left() + s.width() * 0.78, g], 58.0, 1.0, t, &mut out);
+        paint_prims(p, &out, &Transform { scale: 1.0, offset: Vec2::ZERO });
+        snowman(p, pos2(s.left() + s.width() * x * 0.8, g), 44.0, t);
+    }
+    // Two-way arrow between them.
+    let y = rect.top() + 62.0;
+    let col = c(255, 255, 255, 220);
+    p.line_segment([pos2(cx - 30.0, y), pos2(cx + 30.0, y)], Stroke::new(2.5, col));
+    p.add(Shape::convex_polygon(vec![pos2(cx + 36.0, y), pos2(cx + 27.0, y - 6.0), pos2(cx + 27.0, y + 6.0)], col, Stroke::NONE));
+    p.add(Shape::convex_polygon(vec![pos2(cx - 36.0, y), pos2(cx - 27.0, y - 6.0), pos2(cx - 27.0, y + 6.0)], col, Stroke::NONE));
 }
