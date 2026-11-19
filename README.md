@@ -67,7 +67,7 @@ graphics), so the discrete GPU can stay asleep. `SNOWY_GPU=performance` picks th
 
 ## Privacy
 
-Snowy has no accounts and no telemetry. It uses the network for two things only:
+Snowy has no accounts and no analytics. It uses the network for four things only:
 
 - **Update check** (on by default; turn it off under Settings > System > "Check for
   updates"): about once a day it asks GitHub's public API for the latest release of this
@@ -77,6 +77,13 @@ Snowy has no accounts and no telemetry. It uses the network for two things only:
 - **Match my weather** (off unless you pick it): an IP-based rough location lookup, then a
   forecast query to [Open-Meteo](https://open-meteo.com/). The location is not stored; the
   cached `weather.json` holds only the weather.
+- **Anonymous usage count** (on by default; turn it off under Settings > System > "Send
+  anonymous usage count"): once a day it sends only the app version to
+  `snowy.berkcantumer.dev`. The server keeps just daily totals per version, no IP addresses.
+- **Friends** (off unless you turn it on under Settings > Friends): Snowy creates a key pair
+  on your computer and connects to `snowy.berkcantumer.dev`. The server stores your public
+  key, the friend code derived from it, your friendships and pending requests. Nicknames you
+  give friends stay on your computer. No IP addresses are stored.
 
 Nothing else leaves your computer. The installer shows this notice before installing.
 

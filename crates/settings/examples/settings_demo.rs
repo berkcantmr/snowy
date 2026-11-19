@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     let per: u64 = std::env::var("DEMO_PAGE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     snowy_settings::run_demo(
         monitors,
-        Some(std::time::Duration::from_secs(per * 6)),
+        Some(std::time::Duration::from_secs(per * 7)),
         Some(std::time::Duration::from_secs(per)),
     )
 }

@@ -28,6 +28,7 @@ pub struct SettingsApp {
     page_cycle: Option<Duration>,
     was_focused: bool,
     pub(crate) update: crate::update_ui::UpdateUi,
+    pub(crate) friends: crate::ui::friends::FriendsUi,
 }
 
 impl SettingsApp {
@@ -61,6 +62,7 @@ impl SettingsApp {
             page_cycle,
             was_focused: true,
             update: Default::default(),
+            friends: Default::default(),
         }
     }
 

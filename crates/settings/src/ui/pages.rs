@@ -16,6 +16,7 @@ impl SettingsApp {
             Page::Appearance => self.page_appearance(ui),
             Page::Desktop => self.page_desktop(ui),
             Page::Wallpapers => self.page_wallpapers(ui),
+            Page::Friends => self.page_friends(ui),
             Page::System => self.page_system(ui),
             Page::About => self.page_about(ui),
         }
@@ -220,6 +221,15 @@ impl SettingsApp {
                 i18n::t(lang, "settings.check_updates"),
                 i18n::t(lang, "settings.check_updates_hint"),
                 &mut self.settings.check_updates,
+                true,
+            );
+            divider(ui, &pal);
+            dirty |= toggle_row(
+                ui,
+                &pal,
+                i18n::t(lang, "settings.usage_stats"),
+                i18n::t(lang, "settings.usage_stats_hint"),
+                &mut self.settings.usage_stats,
                 true,
             );
         });
