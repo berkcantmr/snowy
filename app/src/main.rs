@@ -75,6 +75,8 @@ struct App {
     wallpaper: WallpaperState,
     /// Edit mode: props next to desktop icons can be moved (toggled by shortcut or tray).
     edit_mode: bool,
+    /// Edit mode hid the desktop icons; they come back when it ends (or Snowy quits).
+    icons_hidden: bool,
     /// Last activity in edit mode (it turns itself off after `EDIT_IDLE`).
     edit_active: Instant,
     hotkey: Option<snowy_sys::EditHotkey>,
@@ -162,6 +164,7 @@ fn main() -> anyhow::Result<()> {
         update_shown: None,
         wallpaper: WallpaperState::default(),
         edit_mode: false,
+        icons_hidden: false,
         edit_active: Instant::now(),
         hotkey: snowy_sys::EditHotkey::register(),
         desktop_icons: snowy_sys::DesktopIcons::start(),
@@ -171,6 +174,12 @@ fn main() -> anyhow::Result<()> {
     match &app.hotkey {
         Some(h) => log::info!("edit mode shortcut: {:?}", h.combo),
         None => log::warn!("no edit mode shortcut could be registered"),
+    }
+    // Snowy stopped last time while edit mode had the desktop icons hidden: show them again.
+    if icons_marker().exists() {
+        log::info!("showing the desktop icons hidden by the last run");
+        snowy_sys::set_desktop_icons_visible(true);
+        let _ = std::fs::remove_file(icons_marker());
     }
     app.rebuild_screens();
     app.resolve_effect(true);
@@ -894,6 +903,15 @@ impl App {
         log::info!("edit mode {}", if on { "on" } else { "off" });
         self.edit_mode = on;
         self.edit_active = Instant::now();
+        // Desktop icons are out of the way while arranging decorations.
+        if on {
+            if snowy_sys::desktop_icons_visible() == Some(true) && snowy_sys::set_desktop_icons_visible(false) {
+                self.icons_hidden = true;
+                let _ = std::fs::write(icons_marker(), b"1");
+            }
+        } else {
+            self.restore_desktop_icons();
+        }
         for s in &mut self.screens {
             s.props.set_edit_mode(on);
         }
@@ -907,6 +925,17 @@ impl App {
             }
         }
         self.refresh_tray();
+    }
+
+    /// Shows the desktop icons again if edit mode hid them.
+    fn restore_desktop_icons(&mut self) {
+        if self.icons_hidden {
+            self.icons_hidden = false;
+            if !snowy_sys::set_desktop_icons_visible(true) {
+                log::warn!("could not show the desktop icons again");
+            }
+            let _ = std::fs::remove_file(icons_marker());
+        }
     }
 
     /// The press at `pt` (screen px) hit a prop locked next to desktop icons.
@@ -1212,6 +1241,18 @@ fn month_from_days(z: i64) -> u32 {
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
     (if mp < 10 { mp + 3 } else { mp - 9 }) as u32
+}
+
+/// Exists while edit mode has the desktop icons hidden, so a crash can't leave them off.
+fn icons_marker() -> std::path::PathBuf {
+    Settings::dir().join("icons-hidden-by-edit-mode")
+}
+
+impl Drop for App {
+    /// However Snowy quits, the desktop icons don't stay hidden.
+    fn drop(&mut self) {
+        self.restore_desktop_icons();
+    }
 }
 
 fn lang_of(s: &Settings) -> String {

@@ -32,3 +32,6 @@ pub use desktop_icons::{query_desktop_icons, DesktopIcons};
 
 mod popup;
 pub use popup::open_shell_popup;
+
+mod icons_visibility;
+pub use icons_visibility::{desktop_icons_visible, set_desktop_icons_visible};
