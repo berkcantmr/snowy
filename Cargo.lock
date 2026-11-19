@@ -2975,7 +2975,7 @@ dependencies = [
 
 [[package]]
 name = "snowy"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "fastrand",
@@ -2996,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-art"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "png 0.17.16",
  "snowy-core",
@@ -3005,7 +3005,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3015,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-effects"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "fastrand",
  "snowy-core",
@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-gfx"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3035,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-net"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-props"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "fastrand",
  "log",
@@ -3065,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-settings"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "eframe",
@@ -3080,7 +3080,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-sys"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "log",
@@ -3091,7 +3091,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-update"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "log",
@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-wallpaper"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "png 0.17.16",
  "windows",
@@ -3112,7 +3112,7 @@ dependencies = [
 
 [[package]]
 name = "snowy-weather"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "log",

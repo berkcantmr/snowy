@@ -4,11 +4,14 @@
 //! picture. Someone who skipped releases sees the highlights of every one they missed.
 
 /// The newest release with highlights.
-pub const VERSION: &str = "0.1.6";
+pub const VERSION: &str = "0.1.7";
 
 /// Which custom-drawn picture goes on top of a highlight card (see `ui::whats_new_art`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preview {
+    Names,
+    Squash,
+    CleanDesk,
     Friends,
     Throw,
     SharedDesk,
@@ -33,6 +36,9 @@ pub struct Highlight {
 
 /// Newest first.
 const HIGHLIGHTS: &[Highlight] = &[
+    Highlight { version: "0.1.7", preview: Preview::Names, title: "whats_new.names.title", body: "whats_new.names.body" },
+    Highlight { version: "0.1.7", preview: Preview::Squash, title: "whats_new.squash.title", body: "whats_new.squash.body" },
+    Highlight { version: "0.1.7", preview: Preview::CleanDesk, title: "whats_new.clean.title", body: "whats_new.clean.body" },
     Highlight { version: "0.1.6", preview: Preview::Friends, title: "whats_new.friends.title", body: "whats_new.friends.body" },
     Highlight { version: "0.1.6", preview: Preview::Throw, title: "whats_new.throw.title", body: "whats_new.throw.body" },
     Highlight { version: "0.1.6", preview: Preview::SharedDesk, title: "whats_new.shared.title", body: "whats_new.shared.body" },

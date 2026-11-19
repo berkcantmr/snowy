@@ -25,6 +25,9 @@ pub fn paint(painter: &Painter, rect: Rect, preview: Preview, t: f32, pal: &Pale
         flakes(&p, rect, t, pal);
     }
     match preview {
+        Preview::Names => names(&p, rect, t, pal),
+        Preview::Squash => squash(&p, rect, t, pal),
+        Preview::CleanDesk => clean_desk(&p, rect, t, pal),
         Preview::Friends => friends(&p, rect, t, pal),
         Preview::Throw => throw(&p, rect, t, pal),
         Preview::SharedDesk => shared_desk(&p, rect, t, pal),
@@ -661,4 +664,92 @@ fn shared_desk(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
     p.line_segment([pos2(cx - 30.0, y), pos2(cx + 30.0, y)], Stroke::new(2.5, col));
     p.add(Shape::convex_polygon(vec![pos2(cx + 36.0, y), pos2(cx + 27.0, y - 6.0), pos2(cx + 27.0, y + 6.0)], col, Stroke::NONE));
     p.add(Shape::convex_polygon(vec![pos2(cx - 36.0, y), pos2(cx - 27.0, y - 6.0), pos2(cx - 27.0, y + 6.0)], col, Stroke::NONE));
+}
+
+// ---------------------------------------------------------------- 0.1.7
+
+fn names(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let cx = rect.center().x;
+    let g = ground(rect);
+    snowman(p, pos2(cx - 90.0, g), 112.0, t);
+    // A name field, as in the snowman's editor, being typed into.
+    let field = Rect::from_min_size(pos2(cx - 10.0, rect.top() + 44.0), vec2(190.0, 34.0));
+    p.rect_filled(field, 8, if pal.dark { c(30, 38, 54, 240) } else { c(255, 255, 255, 245) });
+    p.rect_stroke(field, 8, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
+    let full = "Kartopu";
+    let n = ((t * 3.0) as usize % (full.len() + 6)).min(full.len());
+    let shown = &full[..n];
+    let text_col = if pal.dark { c(240, 245, 252, 255) } else { c(30, 42, 60, 255) };
+    let galley = p.layout_no_wrap(shown.to_string(), semibold(16.0), text_col);
+    let tx = field.left() + 12.0;
+    p.galley(pos2(tx, field.center().y - galley.size().y / 2.0), galley.clone(), text_col);
+    if (t * 2.0).fract() < 0.6 {
+        let x = tx + galley.size().x + 2.0;
+        p.line_segment([pos2(x, field.top() + 8.0), pos2(x, field.bottom() - 8.0)], Stroke::new(1.5, pal.accent));
+    }
+    // A dotted line from the field to the snowman.
+    let (a, b) = (pos2(field.left() - 6.0, field.center().y), pos2(cx - 62.0, g - 70.0));
+    for k in 0..8 {
+        let f = k as f32 / 7.0;
+        p.circle_filled(a + (b - a) * f, 1.6, c(255, 255, 255, 170));
+    }
+}
+
+fn squash(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let base = taskbar(p, rect, pal);
+    // Two balls: the big one sits deeper in the snow and pushes up a bigger rim.
+    let balls = [(rect.center().x - 90.0, 22.0), (rect.center().x + 80.0, 40.0)];
+    let depth = 26.0;
+    let sink = |r: f32| r * (0.08 + 0.20 * ((r - 6.0) / 34.0).clamp(0.0, 1.0));
+    let settle = ease(t * 0.12).max(0.0);
+    let height = |x: f32| {
+        let mut h = depth;
+        for (bx, r) in balls {
+            let s = sink(r) * settle;
+            let d = (x - bx).abs();
+            if d < r {
+                // Squashed under the ball, down to its outline.
+                let outline = depth - s + (r - (r * r - d * d).sqrt());
+                h = h.min(outline);
+            } else if d < r * 1.6 {
+                h += s * 1.2 * (1.0 - (d - r) / (r * 0.6));
+            }
+        }
+        h
+    };
+    snow_bank(p, rect.left(), rect.right(), base, pal, height);
+    for (bx, r) in balls {
+        let cy = base - depth + sink(r) * settle - r;
+        let at = pos2(bx, cy);
+        p.circle_filled(at + vec2(2.0, 3.0), r, c(0, 20, 50, 40));
+        p.circle_filled(at, r, WHITE);
+        p.circle_filled(at + vec2(-r * 0.3, -r * 0.3), r * 0.35, c(220, 232, 248, 255));
+        p.circle_stroke(at, r, Stroke::new(1.0, c(150, 175, 210, 120)));
+    }
+}
+
+fn clean_desk(p: &Painter, rect: Rect, t: f32, pal: &Palette) {
+    let cx = rect.center().x;
+    let g = ground(rect);
+    // Desktop icons fade out while edit mode is on, and come back after.
+    let on = (t / 3.0).floor() as i32 % 2 == 0;
+    let k = ((t / 3.0).fract() * 4.0).min(1.0);
+    let alpha = if on { 1.0 - k } else { k };
+    let tints = [pal.accent, c(240, 160, 90, 255), c(110, 190, 140, 255)];
+    for (i, tint) in tints.into_iter().enumerate() {
+        let tl = pos2(rect.left() + 26.0, rect.top() + 14.0 + i as f32 * 42.0);
+        let a = alpha.clamp(0.0, 1.0);
+        if a > 0.02 {
+            let body = Rect::from_min_size(tl, vec2(26.0, 32.0));
+            p.rect_filled(body, 4, tint.gamma_multiply(a));
+            p.rect_filled(Rect::from_min_size(tl + vec2(5.0, 8.0), vec2(16.0, 3.0)), 1, WHITE.gamma_multiply(a));
+            p.rect_filled(Rect::from_min_size(tl + vec2(5.0, 15.0), vec2(12.0, 3.0)), 1, WHITE.gamma_multiply(a));
+        }
+    }
+    snowman(p, pos2(cx - 30.0 + 40.0 * ease(t * 0.16), g), 100.0, t);
+    // The edit mode badge.
+    let pill = Rect::from_center_size(pos2(cx + 140.0, rect.top() + 40.0), vec2(120.0, 30.0));
+    let (fill, text) = if on { (pal.accent, pal.on_accent) } else { (c(8, 24, 52, if pal.dark { 110 } else { 70 }), WHITE) };
+    p.rect_filled(pill, 15, fill);
+    p.text(pill.center(), Align2::CENTER_CENTER, "Win + Alt + S", semibold(12.5), text);
 }
