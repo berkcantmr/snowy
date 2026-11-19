@@ -48,6 +48,10 @@ pub struct Settings {
     pub original_wallpaper: Option<String>,
     /// Once a day, ask GitHub for the latest release (no other data is sent).
     pub check_updates: bool,
+    /// Connect to the friends server (friend codes, presence). Off until the user turns it on.
+    pub friends: bool,
+    /// Once a day, send only the app version so the number of users can be counted.
+    pub usage_stats: bool,
     /// Version whose "What's new" the user has seen (empty = never recorded).
     pub last_seen_version: String,
 }
@@ -75,6 +79,8 @@ impl Default for Settings {
             wallpaper_time: "golden".to_string(),
             original_wallpaper: None,
             check_updates: true,
+            friends: false,
+            usage_stats: true,
             last_seen_version: String::new(),
         }
     }

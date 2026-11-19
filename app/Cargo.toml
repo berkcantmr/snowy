@@ -17,6 +17,7 @@ snowy-props.workspace = true
 snowy-weather.workspace = true
 snowy-update.workspace = true
 snowy-wallpaper.workspace = true
+snowy-net.workspace = true
 anyhow.workspace = true
 log.workspace = true
 fastrand.workspace = true

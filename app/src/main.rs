@@ -34,6 +34,12 @@ impl Screen {
 
 struct App {
     settings: Settings,
+    /// Friends server connection (only while friends are turned on).
+    friends: Option<snowy_net::Hub>,
+    /// Revision of the friends state last written to friends.json.
+    friends_rev: u64,
+    /// A usage ping is being sent right now.
+    usage_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     settings_mtime: Option<SystemTime>,
     screens: Vec<Screen>,
     active: Option<EffectKind>,
@@ -123,6 +129,9 @@ fn main() -> anyhow::Result<()> {
     let mut app = App {
         settings_mtime: mtime(),
         settings: settings.clone(),
+        friends: None,
+        friends_rev: 0,
+        usage_busy: Default::default(),
         screens: Vec::new(),
         active: None,
         user_paused: false,
@@ -157,6 +166,7 @@ fn main() -> anyhow::Result<()> {
     let start = Instant::now();
     let mut last = Instant::now();
     let mut last_slow_check = Instant::now() - Duration::from_secs(10);
+    let mut last_friends_check = Instant::now() - Duration::from_secs(10);
     let mut last_scan = Instant::now() - Duration::from_secs(10);
     let mut last_monitors = snowy_sys::monitors();
     let mut prof = Profiler::new();
@@ -220,9 +230,16 @@ fn main() -> anyhow::Result<()> {
             app.resolve_effect(false);
             app.tick_wallpaper();
             app.sync_desktop_icons();
+            app.tick_usage_ping();
             if app.edit_mode && app.edit_active.elapsed() >= EDIT_IDLE {
                 app.set_edit_mode(false);
             }
+        }
+
+        // Friends: commands from the settings window and state for it, 4 times a second.
+        if last_friends_check.elapsed() >= Duration::from_millis(250) {
+            last_friends_check = Instant::now();
+            app.tick_friends();
         }
 
         let now = Instant::now();
@@ -608,6 +625,70 @@ impl App {
 
     /// Simulate and draw the props layer of every screen; route events and actions between
     /// the weather effect and the props.
+    /// Connects to / disconnects from the friends server as the setting says, passes the
+    /// settings window's commands on and publishes the state for it.
+    fn tick_friends(&mut self) {
+        let dir = Settings::dir();
+        if self.settings.friends && self.friends.is_none() {
+            match snowy_net::identity::load_or_create(&dir.join("identity.key")) {
+                Ok(key) => {
+                    log::info!("friends: on");
+                    self.friends = Some(snowy_net::Hub::start(key, snowy_net::hub_url(), env!("CARGO_PKG_VERSION").to_string()));
+                }
+                Err(e) => log::warn!("friends: no identity key: {e:#}"),
+            }
+        } else if !self.settings.friends && self.friends.is_some() {
+            log::info!("friends: off");
+            self.friends = None;
+            let mut st = snowy_net::state::load_state(&dir);
+            st.status = snowy_net::Status::Off;
+            for f in &mut st.friends {
+                f.online = false;
+            }
+            st.rev = st.rev.wrapping_add(1);
+            let _ = snowy_net::state::save_state(&dir, &st);
+            self.friends_rev = 0;
+        }
+        let commands = snowy_net::state::take_commands(&dir);
+        if let Some(hub) = &self.friends {
+            for c in commands {
+                hub.send(c);
+            }
+            let st = hub.state();
+            if st.rev != self.friends_rev {
+                self.friends_rev = st.rev;
+                if let Err(e) = snowy_net::state::save_state(&dir, &st) {
+                    log::warn!("friends: writing state: {e}");
+                }
+            }
+        }
+    }
+
+    /// Once a day (if allowed), sends the anonymous usage ping on a background thread.
+    fn tick_usage_ping(&mut self) {
+        use std::sync::atomic::Ordering;
+        if !self.settings.usage_stats || self.usage_busy.load(Ordering::Relaxed) {
+            return;
+        }
+        let dir = Settings::dir();
+        if !snowy_net::usage::due(&dir) {
+            return;
+        }
+        self.usage_busy.store(true, Ordering::Relaxed);
+        let busy = self.usage_busy.clone();
+        std::thread::spawn(move || {
+            match snowy_net::usage::send(&dir, snowy_net::PING_URL, env!("CARGO_PKG_VERSION")) {
+                Ok(()) => log::info!("usage ping sent"),
+                Err(e) => log::info!("usage ping failed: {e}"),
+            }
+            // A failed ping is retried after an hour, not every second.
+            if snowy_net::usage::due(&dir) {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+            busy.store(false, Ordering::Relaxed);
+        });
+    }
+
     /// On a new press: a snowball under the cursor wins, then a decoration, then the weather
     /// (starting a snowball on the snow). Released: nobody.
     fn decide_pointer_owner(&mut self, was_down: bool) {

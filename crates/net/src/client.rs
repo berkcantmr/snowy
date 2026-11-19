@@ -1,0 +1,300 @@
+//! The connection to the friends server, on its own thread: logs in with the identity key,
+//! keeps `FriendsState` current, sends commands, pings, and reconnects with backoff.
+
+use crate::identity::friend_code;
+use crate::state::{Command, Friend, FriendsState, Status};
+use anyhow::{anyhow, bail, Result};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
+use ed25519_dalek::{Signer, SigningKey};
+use serde::Deserialize;
+use std::net::TcpStream;
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket};
+
+/// What a client signs to log in (server/src/proto.rs).
+const AUTH_PREFIX: &[u8] = b"snowy-hub-auth-v1:";
+const PING_EVERY: Duration = Duration::from_secs(30);
+const SILENT_LIMIT: Duration = Duration::from_secs(90);
+
+enum Ctl {
+    Cmd(Command),
+    Stop,
+}
+
+/// Handle to the connection thread. Dropping it disconnects.
+pub struct Hub {
+    state: Arc<Mutex<FriendsState>>,
+    tx: Sender<Ctl>,
+}
+
+impl Hub {
+    /// Connects to `url` (wss://…/ws) as `key` and stays connected until dropped.
+    pub fn start(key: SigningKey, url: String, ver: String) -> Hub {
+        let code = friend_code(&key.verifying_key().to_bytes());
+        let state = Arc::new(Mutex::new(FriendsState { status: Status::Connecting, code, rev: 1, ..Default::default() }));
+        let (tx, rx) = channel();
+        let st = state.clone();
+        let _ = std::thread::Builder::new().name("snowy-hub".into()).spawn(move || run(key, url, ver, st, rx));
+        Hub { state, tx }
+    }
+
+    pub fn state(&self) -> FriendsState {
+        self.state.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+
+    pub fn send(&self, cmd: Command) {
+        let _ = self.tx.send(Ctl::Cmd(cmd));
+    }
+}
+
+impl Drop for Hub {
+    fn drop(&mut self) {
+        let _ = self.tx.send(Ctl::Stop);
+    }
+}
+
+fn update(st: &Mutex<FriendsState>, f: impl FnOnce(&mut FriendsState)) {
+    if let Ok(mut s) = st.lock() {
+        f(&mut s);
+        s.rev += 1;
+    }
+}
+
+fn run(key: SigningKey, url: String, ver: String, st: Arc<Mutex<FriendsState>>, rx: Receiver<Ctl>) {
+    let mut backoff = Duration::from_secs(2);
+    loop {
+        update(&st, |s| s.status = Status::Connecting);
+        let mut welcomed = false;
+        match session(&key, &url, &ver, &st, &rx, &mut welcomed) {
+            Ok(()) => break,
+            Err(e) => log::info!("friends server: {e}"),
+        }
+        if welcomed {
+            backoff = Duration::from_secs(2);
+        }
+        update(&st, |s| {
+            s.status = Status::Retrying;
+            for f in &mut s.friends {
+                f.online = false;
+            }
+        });
+        // Wait before retrying; commands meanwhile can't be sent.
+        let until = Instant::now() + backoff;
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match rx.recv_timeout(left) {
+                Ok(Ctl::Stop) | Err(RecvTimeoutError::Disconnected) => return,
+                Ok(Ctl::Cmd(_)) => update(&st, |s| s.last_error = Some("offline".into())),
+                Err(RecvTimeoutError::Timeout) => break,
+            }
+        }
+        backoff = (backoff * 2).min(Duration::from_secs(60));
+    }
+    update(&st, |s| s.status = Status::Off);
+}
+
+type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
+
+fn set_timeout(ws: &mut Ws, t: Duration) {
+    let _ = match ws.get_mut() {
+        MaybeTlsStream::Plain(s) => s.set_read_timeout(Some(t)),
+        MaybeTlsStream::Rustls(s) => s.sock.set_read_timeout(Some(t)),
+        _ => Ok(()),
+    };
+}
+
+fn send(ws: &mut Ws, v: serde_json::Value) -> Result<()> {
+    ws.send(Message::Text(v.to_string().into()))?;
+    Ok(())
+}
+
+/// Next text message, or None when the read timed out.
+fn read(ws: &mut Ws) -> Result<Option<In>> {
+    match ws.read() {
+        Ok(Message::Text(t)) => Ok(serde_json::from_str(&t).ok()),
+        Ok(Message::Close(_)) => bail!("closed by the server"),
+        Ok(_) => Ok(None),
+        Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn expect(ws: &mut Ws, what: &str, f: impl Fn(&In) -> bool) -> Result<In> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if let Some(m) = read(ws)? {
+            if f(&m) {
+                return Ok(m);
+            }
+            if let In::Error { code } = m {
+                bail!("login refused: {code}");
+            }
+        }
+    }
+    Err(anyhow!("no {what} from the server"))
+}
+
+/// One connection. Ok(()) only when told to stop.
+fn session(key: &SigningKey, url: &str, ver: &str, st: &Mutex<FriendsState>, rx: &Receiver<Ctl>, welcomed: &mut bool) -> Result<()> {
+    let (mut ws, _) = tungstenite::connect(url)?;
+    set_timeout(&mut ws, Duration::from_millis(300));
+    send(&mut ws, serde_json::json!({ "t": "hello", "key": B64.encode(key.verifying_key().to_bytes()), "ver": ver }))?;
+    let In::Challenge { nonce } = expect(&mut ws, "challenge", |m| matches!(m, In::Challenge { .. }))? else { unreachable!() };
+    let mut msg = AUTH_PREFIX.to_vec();
+    msg.extend_from_slice(&B64.decode(nonce.as_bytes())?);
+    send(&mut ws, serde_json::json!({ "t": "auth", "sig": B64.encode(key.sign(&msg).to_bytes()) }))?;
+    let welcome = expect(&mut ws, "welcome", |m| matches!(m, In::Welcome { .. }))?;
+    *welcomed = true;
+    update(st, |s| {
+        apply(s, welcome);
+        s.status = Status::Online;
+    });
+    log::info!("friends server: connected");
+
+    let (mut last_ping, mut last_heard) = (Instant::now(), Instant::now());
+    loop {
+        loop {
+            match rx.try_recv() {
+                Ok(Ctl::Cmd(c)) => {
+                    update(st, |s| s.last_error = None);
+                    send(&mut ws, serde_json::to_value(&c)?)?;
+                }
+                Ok(Ctl::Stop) | Err(TryRecvError::Disconnected) => {
+                    let _ = ws.close(None);
+                    return Ok(());
+                }
+                Err(TryRecvError::Empty) => break,
+            }
+        }
+        if last_ping.elapsed() >= PING_EVERY {
+            send(&mut ws, serde_json::json!({ "t": "ping" }))?;
+            last_ping = Instant::now();
+        }
+        if let Some(m) = read(&mut ws)? {
+            last_heard = Instant::now();
+            update(st, |s| apply(s, m));
+        } else if last_heard.elapsed() > SILENT_LIMIT {
+            bail!("the server went quiet");
+        }
+    }
+}
+
+/// Server messages (server/src/proto.rs `Out`).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum In {
+    Challenge { nonce: String },
+    Welcome { code: String, friends: Vec<Friend>, requests: Vec<String>, sent: Vec<String> },
+    Request { code: String },
+    RequestSent { code: String },
+    FriendAdded { friend: Friend },
+    FriendRemoved { code: String },
+    Presence { code: String, online: bool },
+    Relay {},
+    Error { code: String },
+    Pong,
+}
+
+fn apply(s: &mut FriendsState, m: In) {
+    let push = |v: &mut Vec<String>, c: String| {
+        if !v.contains(&c) {
+            v.push(c);
+        }
+    };
+    match m {
+        In::Welcome { code, friends, requests, sent } => {
+            s.code = code;
+            s.friends = friends;
+            s.requests = requests;
+            s.sent = sent;
+        }
+        In::Request { code } => push(&mut s.requests, code),
+        In::RequestSent { code } => push(&mut s.sent, code),
+        In::FriendAdded { friend } => {
+            s.requests.retain(|c| *c != friend.code);
+            s.sent.retain(|c| *c != friend.code);
+            match s.friends.iter_mut().find(|f| f.code == friend.code) {
+                Some(f) => *f = friend,
+                None => s.friends.push(friend),
+            }
+        }
+        In::FriendRemoved { code } => {
+            s.friends.retain(|f| f.code != code);
+            s.requests.retain(|c| *c != code);
+            s.sent.retain(|c| *c != code);
+        }
+        In::Presence { code, online } => {
+            if let Some(f) = s.friends.iter_mut().find(|f| f.code == code) {
+                f.online = online;
+            }
+        }
+        In::Error { code } if code != "slow_down" => s.last_error = Some(code),
+        In::Error { .. } | In::Challenge { .. } | In::Relay {} | In::Pong => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_follows_server_messages() {
+        let mut s = FriendsState::default();
+        let f = |code: &str, online| Friend { code: code.into(), online, key: "k".into() };
+        apply(&mut s, In::Welcome { code: "ME00-0000".into(), friends: vec![f("AAAA-AAAA", true)], requests: vec!["BBBB-BBBB".into()], sent: vec![] });
+        apply(&mut s, In::RequestSent { code: "CCCC-CCCC".into() });
+        apply(&mut s, In::FriendAdded { friend: f("BBBB-BBBB", true) });
+        apply(&mut s, In::Presence { code: "AAAA-AAAA".into(), online: false });
+        apply(&mut s, In::Error { code: "unknown_code".into() });
+        assert_eq!(s.friends, [f("AAAA-AAAA", false), f("BBBB-BBBB", true)]);
+        assert!(s.requests.is_empty());
+        assert_eq!(s.sent, ["CCCC-CCCC"]);
+        assert_eq!(s.last_error.as_deref(), Some("unknown_code"));
+        apply(&mut s, In::FriendRemoved { code: "AAAA-AAAA".into() });
+        assert_eq!(s.friends.len(), 1);
+    }
+
+    /// Talks to the real server. Run with `cargo test -p snowy-net -- --ignored live`.
+    #[test]
+    #[ignore]
+    fn live_two_clients_become_friends() {
+        let url = std::env::var("SNOWY_HUB").unwrap_or_else(|_| crate::HUB_URL.to_string());
+        let mk = |seed: u8| {
+            let mut s = [0u8; 32];
+            getrandom::getrandom(&mut s).unwrap();
+            s[0] = seed;
+            SigningKey::from_bytes(&s)
+        };
+        let a = Hub::start(mk(1), url.clone(), "test".into());
+        let b = Hub::start(mk(2), url, "test".into());
+        let wait = |h: &Hub, f: &dyn Fn(&FriendsState) -> bool| {
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(15) {
+                if f(&h.state()) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("timed out: {:?}", h.state());
+        };
+        wait(&a, &|s| s.status == Status::Online);
+        wait(&b, &|s| s.status == Status::Online);
+        a.send(Command::Add { code: b.state().code });
+        wait(&b, &|s| !s.requests.is_empty());
+        b.send(Command::Accept { code: a.state().code });
+        wait(&a, &|s| s.friends.iter().any(|f| f.online));
+        drop(b);
+        wait(&a, &|s| s.friends.iter().all(|f| !f.online));
+        // Clean up the test friendship.
+        let other = a.state().friends[0].code.clone();
+        a.send(Command::Remove { code: other });
+        wait(&a, &|s| s.friends.is_empty());
+    }
+}

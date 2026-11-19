@@ -1,0 +1,14 @@
+services:
+  snowy-hub:
+    build: .
+    image: local/snowy-hub
+    container_name: snowy-hub
+    restart: unless-stopped
+    # Only reachable from this machine: the Cloudflare tunnel forwards
+    # https://snowy.berkcantumer.dev to it.
+    ports:
+      - "127.0.0.1:8790:8790"
+    volumes:
+      - ./data:/data
+    mem_limit: 256m
+    cpus: 1.0
