@@ -13,6 +13,7 @@ AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher=Snowy
 LicenseFile=..\LICENSE
+InfoBeforeFile=privacy.txt
 AppCopyright=Copyright (c) 2026 berkcantmr
 DefaultDirName={localappdata}\Programs\Snowy
 DefaultGroupName=Snowy
@@ -31,6 +32,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 RestartApplications=no
 VersionInfoVersion={#MyAppVersion}
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCompany=Snowy
+VersionInfoDescription=Snowy setup
+VersionInfoCopyright=Copyright (c) 2026 berkcantmr
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

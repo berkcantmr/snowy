@@ -1,0 +1,9 @@
+Privacy
+
+Snowy works offline, with these exceptions:
+
+1. Update check. Once a day Snowy asks the GitHub API (api.github.com) whether a newer release exists. This is on by default and can be turned off in Settings > System > Check for updates. The request contains only the app name and version (User-Agent: Snowy/<version>) plus your IP address, like any web request. Updates are only downloaded if you accept them.
+
+2. "Match my weather" (optional). Only when you choose this feature, Snowy looks up your rough location from your IP address (ip-api.com, falling back to ipapi.co) and then fetches the current weather for those rounded coordinates from Open-Meteo (api.open-meteo.com).
+
+Snowy has no telemetry, no analytics and no accounts. Nothing else is sent anywhere.
