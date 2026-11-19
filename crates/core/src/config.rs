@@ -22,6 +22,8 @@ pub struct Settings {
     pub keep_windows_clear: bool,
     /// Allow rolling and throwing snowballs with the mouse on the desktop.
     pub snowballs: bool,
+    /// Maximum height of piled-up snow, relative to the default (0.3..=3.0).
+    pub snow_depth: f32,
     /// Stop rendering while on battery power.
     pub pause_on_battery: bool,
     /// Stop rendering while a fullscreen app/game is in the foreground.
@@ -60,6 +62,7 @@ impl Default for Settings {
             behind_windows: false,
             keep_windows_clear: false,
             snowballs: true,
+            snow_depth: 1.0,
             pause_on_battery: true,
             pause_on_fullscreen: true,
             start_with_windows: true,
@@ -109,6 +112,7 @@ impl Settings {
     pub fn clamp(&mut self) {
         self.intensity = self.intensity.clamp(0.25, 2.0);
         self.speed = self.speed.clamp(0.5, 2.0);
+        self.snow_depth = if self.snow_depth.is_finite() { self.snow_depth.clamp(0.3, 3.0) } else { 1.0 };
         self.max_fps = self.max_fps.clamp(15, 144);
         self.random_minutes = self.random_minutes.clamp(1, 24 * 60);
     }

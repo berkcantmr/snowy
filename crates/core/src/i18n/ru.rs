@@ -29,6 +29,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.behind_windows" => "За окнами",
         "settings.behind_windows_hint" => "Эффект остаётся на обоях, под всеми приложениями",
         "settings.keep_windows_clear" => "Не засыпать окна",
+        "settings.snow_depth" => "Максимальная высота снега",
+        "settings.snow_depth_hint" => "Насколько высоко снег может скапливаться на панели задач и окнах. Он образует сугробы, которые ветер медленно сдвигает.",
         "settings.keep_windows_clear_hint" => "Снег и лепестки не скапливаются на окнах и панели задач",
         "settings.snowballs" => "Снежки",
         "settings.snowballs_hint" => "Зажмите и потяните на рабочем столе, чтобы скатать снежок, отпустите, чтобы бросить",

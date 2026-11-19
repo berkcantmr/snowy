@@ -29,6 +29,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.behind_windows" => "Pencerelerin arkasında",
         "settings.behind_windows_hint" => "Efekt duvar kâğıdında kalır, uygulamaların altında",
         "settings.keep_windows_clear" => "Pencereleri temiz tut",
+        "settings.snow_depth" => "En yüksek kar kalınlığı",
+        "settings.snow_depth_hint" => "Görev çubuğunda ve pencerelerde karın ne kadar birikebileceği. Kar, rüzgârın yavaşça sürüklediği tepecikler oluşturur.",
         "settings.keep_windows_clear_hint" => "Kar ve yapraklar pencerelerde ve görev çubuğunda birikmez",
         "settings.snowballs" => "Kartopu",
         "settings.snowballs_hint" => "Masaüstünde basılı tutup sürükle, bırakınca fırlat",

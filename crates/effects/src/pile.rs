@@ -10,6 +10,11 @@ pub const MAX_PILE_INSTANCES: usize = 6000;
 pub const GROUND_ID: u64 = u64::MAX;
 const MAX_CLUMPS: usize = 800;
 
+/// Default maximum ground snow height in pixels at 1080p (ledges get half).
+pub const DEFAULT_DEPTH: f32 = 28.0;
+/// Range of the user setting.
+pub const DEPTH_RANGE: (f32, f32) = (8.0, 90.0);
+
 pub struct Pile {
     pub id: u64,
     pub x0: f32,
@@ -19,12 +24,40 @@ pub struct Pile {
     pub max_h: f32,
     pub ground: bool,
     pub cols: Vec<f32>,
+    /// Current maximum height per column: drifts (hills and dips) times the end taper.
+    caps: Vec<f32>,
+    /// Pixel scale (1.0 at 1080p), so drifts are the same size on every screen.
+    sc: f32,
+}
+
+/// Smooth value noise in 0..1 along x (`seed` picks the pattern).
+fn value_noise(x: f32, seed: u64) -> f32 {
+    fn hash(i: i64, seed: u64) -> f32 {
+        let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ seed.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        (h >> 40) as f32 / (1u64 << 24) as f32
+    }
+    let fl = x.floor();
+    let f = x - fl;
+    let t = f * f * (3.0 - 2.0 * f);
+    let i = fl as i64;
+    let (a, b) = (hash(i, seed), hash(i + 1, seed));
+    a + (b - a) * t
+}
+
+/// Drift shape at x (reference pixels): 0..1, a few big hills with smaller bumps on them.
+pub fn drift(x: f32, seed: u64) -> f32 {
+    let big = value_noise(x / 240.0, seed);
+    let small = value_noise(x / 85.0, seed ^ 0x5157);
+    (big * 0.68 + small * 0.32).clamp(0.0, 1.0)
 }
 
 impl Pile {
-    fn new(id: u64, x0: f32, x1: f32, y: f32, cw: f32, max_h: f32) -> Pile {
+    fn new(id: u64, x0: f32, x1: f32, y: f32, cw: f32, max_h: f32, sc: f32) -> Pile {
         let n = (((x1 - x0) / cw).round() as usize).max(1);
-        Pile {
+        let mut p = Pile {
             id,
             x0,
             x1,
@@ -33,7 +66,11 @@ impl Pile {
             max_h,
             ground: id == GROUND_ID,
             cols: vec![0.0; n],
-        }
+            caps: vec![max_h; n],
+            sc: if sc.is_finite() { sc.max(0.01) } else { 1.0 },
+        };
+        p.reshape(0.0);
+        p
     }
 
     pub fn col(&self, x: f32) -> usize {
@@ -41,15 +78,53 @@ impl Pile {
         (((x - self.x0) / self.colw) as isize).clamp(0, n - 1) as usize
     }
 
-    /// Maximum height of column `i` (ledge piles taper towards their ends).
-    fn cap(&self, i: usize) -> f32 {
+    /// Maximum height of column `i` for the drift pattern shifted by `offset` reference
+    /// pixels: ground snow forms hills and dips (35..100 % of the maximum); ledge snow is
+    /// flatter and tapers towards the ends.
+    fn cap_for(&self, i: usize, offset: f32) -> f32 {
+        let cx = (self.x0 + (i as f32 + 0.5) * self.colw) / self.sc - offset;
+        let seed = self.id ^ ((self.y / self.sc) as u64).wrapping_mul(31);
         if self.ground {
-            return self.max_h;
+            return self.max_h * (0.35 + 0.65 * drift(cx, seed));
         }
         let n = self.cols.len();
         let d = (i as f32 + 0.5).min(n as f32 - i as f32 - 0.5);
         let t = (d / 4.0).clamp(0.0, 1.0);
-        self.max_h * (0.15 + 0.85 * t * t * (3.0 - 2.0 * t))
+        let taper = 0.15 + 0.85 * t * t * (3.0 - 2.0 * t);
+        self.max_h * taper * (0.6 + 0.4 * drift(cx, seed))
+    }
+
+    fn cap(&self, i: usize) -> f32 {
+        self.caps[i]
+    }
+
+    /// Recompute the caps for drift offset `offset`. Every column keeps how full it is, so
+    /// hills slide along with the pattern (the wind pushing the drifts).
+    fn reshape(&mut self, offset: f32) {
+        for i in 0..self.cols.len() {
+            let new = self.cap_for(i, offset).max(1e-3);
+            let old = self.caps[i];
+            if old > 1e-3 && self.cols[i] > 0.0 {
+                self.cols[i] = (self.cols[i] * new / old).min(new);
+            }
+            self.caps[i] = new;
+        }
+    }
+
+    /// Change the maximum height, keeping how full every column is.
+    fn set_max_h(&mut self, max_h: f32, offset: f32) {
+        if (max_h - self.max_h).abs() < 1e-3 {
+            return;
+        }
+        let r = max_h / self.max_h.max(1e-3);
+        self.max_h = max_h;
+        for c in &mut self.caps {
+            *c *= r;
+        }
+        for c in &mut self.cols {
+            *c *= r;
+        }
+        self.reshape(offset);
     }
 
     pub fn height_at(&self, x: f32) -> f32 {
@@ -61,10 +136,12 @@ impl Pile {
         self.y - self.height_at(x)
     }
 
-    /// Add snow around x. Growth slows as a column approaches its cap.
+    /// Add snow around x. Growth slows as a column approaches its cap, and columns fill at
+    /// the same pace relative to their cap, so the drifts show from the first flakes on.
     pub fn add(&mut self, x: f32, amt: f32) {
         let i = self.col(x);
         let n = self.cols.len();
+        let rel = amt / self.max_h.max(1e-3);
         for (j, wgt) in [(i as isize, 0.6), (i as isize - 1, 0.2), (i as isize + 1, 0.2)] {
             if j < 0 || j >= n as isize {
                 continue;
@@ -72,7 +149,7 @@ impl Pile {
             let j = j as usize;
             let c = self.cap(j);
             let room = (1.0 - self.cols[j] / c).max(0.0);
-            self.cols[j] = (self.cols[j] + amt * wgt * room).min(c);
+            self.cols[j] = (self.cols[j] + rel * c * wgt * room).min(c);
         }
     }
 
@@ -91,23 +168,22 @@ impl Pile {
         tot
     }
 
+    /// Smooth how full the columns are (not their heights), so gaps fill in while the
+    /// drift shape stays.
     fn diffuse(&mut self, k: f32) {
         let n = self.cols.len();
-        if n > 1 {
-            let mut prev = self.cols[0];
-            for i in 0..n {
-                let cur = self.cols[i];
-                let next = if i + 1 < n { self.cols[i + 1] } else { cur };
-                let left = if i == 0 { cur } else { prev };
-                self.cols[i] = cur + k * (left + next - 2.0 * cur);
-                prev = cur;
-            }
+        if n < 2 {
+            return;
         }
-        if !self.ground {
-            for i in (0..n.min(5)).chain(n.saturating_sub(5)..n) {
-                let c = self.cap(i);
-                self.cols[i] = self.cols[i].min(c);
-            }
+        let fill = |p: &Pile, i: usize| p.cols[i] / p.caps[i].max(1e-3);
+        let mut prev = fill(self, 0);
+        for i in 0..n {
+            let cur = fill(self, i);
+            let next = if i + 1 < n { fill(self, i + 1) } else { cur };
+            let left = if i == 0 { cur } else { prev };
+            let f = (cur + k * (left + next - 2.0 * cur)).clamp(0.0, 1.0);
+            self.cols[i] = f * self.caps[i];
+            prev = cur;
         }
     }
 }
@@ -127,6 +203,10 @@ pub struct Piles {
     last: Vec<Surface>,
     last_ground: Option<f32>,
     dims: (f32, f32),
+    /// Maximum ground height at 1080p (user setting); 0 = DEFAULT_DEPTH.
+    depth: f32,
+    /// How far the wind has pushed the drift pattern (reference pixels).
+    drift_offset: f32,
 }
 
 impl Piles {
@@ -210,10 +290,52 @@ impl Piles {
         })
     }
 
-    pub fn update(&mut self, dt: f32, surfaces: &[Surface], ground: Option<f32>, w: f32, h: f32, rng: &mut Rng) {
+    /// Maximum ground snow height in pixels at 1080p (ledges get half), within DEPTH_RANGE.
+    pub fn set_depth(&mut self, depth: f32) {
+        let d = if depth.is_finite() { depth.clamp(DEPTH_RANGE.0, DEPTH_RANGE.1) } else { DEFAULT_DEPTH };
+        if (d - self.depth()).abs() < 1e-3 {
+            return;
+        }
+        self.depth = d;
+        let off = self.drift_offset;
+        for p in &mut self.piles {
+            let mh = Self::max_h_for(d, p.ground, p.sc);
+            p.set_max_h(mh, off);
+        }
+    }
+
+    fn depth(&self) -> f32 {
+        if self.depth > 0.0 {
+            self.depth
+        } else {
+            DEFAULT_DEPTH
+        }
+    }
+
+    fn max_h_for(depth: f32, ground: bool, sc: f32) -> f32 {
+        if ground {
+            depth * sc
+        } else {
+            depth * 0.5 * sc
+        }
+    }
+
+    /// `wind` is roughly -1..1 (negative = blowing left); it slowly pushes the drifts along.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update(&mut self, dt: f32, wind: f32, surfaces: &[Surface], ground: Option<f32>, w: f32, h: f32, rng: &mut Rng) {
         let sc = ui_scale(w, h);
         if self.last.as_slice() != surfaces || self.last_ground != ground || self.dims != (w, h) {
             self.reconcile(surfaces, ground, w, h, rng);
+        }
+        let wind = if wind.is_finite() { wind.clamp(-1.5, 1.5) } else { 0.0 };
+        // About 6 reference px/s in a full wind: a hill crosses its own width in ~40 s.
+        let step = wind * 6.0 * dt;
+        if step.abs() > 1e-4 {
+            self.drift_offset = (self.drift_offset + step) % 1.0e6;
+            let off = self.drift_offset;
+            for p in &mut self.piles {
+                p.reshape(off);
+            }
         }
         let k = (dt * 1.5).min(0.2);
         for p in &mut self.piles {
@@ -255,8 +377,9 @@ impl Piles {
         let mut new = Vec::with_capacity(want.len());
         for s in &want {
             let is_ground = s.id == GROUND_ID;
-            let max_h = if is_ground { 28.0 } else { 14.0 } * sc;
-            let mut np = Pile::new(s.id, s.x0, s.x1, s.y, cw, max_h);
+            let max_h = Self::max_h_for(self.depth(), is_ground, sc);
+            let mut np = Pile::new(s.id, s.x0, s.x1, s.y, cw, max_h, sc);
+            np.reshape(self.drift_offset);
             for (j, op) in old.iter().enumerate() {
                 let same_y = (op.y - s.y).abs() <= 2.0 || (is_ground && dims_changed);
                 if op.id != s.id || !same_y || op.x1 <= s.x0 || op.x0 >= s.x1 {
@@ -358,7 +481,7 @@ mod tests {
     #[test]
     fn grab_zones_cover_exactly_where_near_snow_is_true() {
         let mut ps = Piles::default();
-        let mut p = Pile::new(1, 100.0, 300.0, 500.0, 4.0, 14.0);
+        let mut p = Pile::new(1, 100.0, 300.0, 500.0, 4.0, 14.0, 1.0);
         // Two separate runs of snow: x in [120,160) and [240,280); nothing elsewhere.
         for (i, c) in p.cols.iter_mut().enumerate() {
             let x = 100.0 + i as f32 * 4.0;
@@ -389,7 +512,7 @@ mod tests {
 
     #[test]
     fn add_caps_and_tapers() {
-        let mut p = Pile::new(1, 100.0, 300.0, 500.0, 4.0, 14.0);
+        let mut p = Pile::new(1, 100.0, 300.0, 500.0, 4.0, 14.0, 1.0);
         for _ in 0..5000 {
             p.add(200.0, 5.0);
             p.add(100.5, 5.0);
@@ -401,10 +524,73 @@ mod tests {
 
     #[test]
     fn remove_clears_range() {
-        let mut p = Pile::new(GROUND_ID, 0.0, 400.0, 500.0, 4.0, 28.0);
+        let mut p = Pile::new(GROUND_ID, 0.0, 400.0, 500.0, 4.0, 28.0, 1.0);
         p.cols.fill(5.0);
         let r = p.remove(100.0, 140.0, 2.0);
         assert!(r > 0.0);
         assert!(p.height_at(120.0) < 5.0 && p.height_at(300.0) == 5.0);
+    }
+
+    /// Ground pile on a 1080p screen after a long, even snowfall.
+    fn full_ground(ps: &mut Piles, wind: f32, secs: f32) {
+        let mut rng = Rng::with_seed(7);
+        let steps = (secs / 0.016) as usize;
+        for s in 0..steps {
+            ps.update(0.016, wind, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+            for k in 0..40 {
+                let x = ((s * 40 + k) * 37 % 1920) as f32 + 0.5;
+                ps.absorb(x, 0.0, 1000.0, 3.0);
+            }
+        }
+    }
+
+    #[test]
+    fn ground_snow_forms_drifts_not_a_flat_layer() {
+        let mut ps = Piles::default();
+        full_ground(&mut ps, 0.0, 60.0);
+        let g = &ps.piles[0];
+        let (lo, hi) = g.cols.iter().fold((f32::MAX, 0.0f32), |(a, b), &c| (a.min(c), b.max(c)));
+        assert!(hi <= DEFAULT_DEPTH + 1e-3, "{hi}");
+        assert!(hi > DEFAULT_DEPTH * 0.8, "hills reach near the maximum: {hi}");
+        assert!(lo < hi * 0.7, "dips stay lower: {lo} vs {hi}");
+        // Neighbouring columns stay close: smooth hills, not noise.
+        let jump = g.cols.windows(2).map(|w| (w[0] - w[1]).abs()).fold(0.0, f32::max);
+        assert!(jump < 1.5, "{jump}");
+    }
+
+    #[test]
+    fn depth_setting_scales_the_snow() {
+        let mut ps = Piles::default();
+        full_ground(&mut ps, 0.0, 30.0);
+        let before = ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
+        ps.set_depth(DEFAULT_DEPTH * 2.0);
+        let after = ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
+        assert!((after - before * 2.0).abs() < 0.5, "{before} -> {after}");
+        full_ground(&mut ps, 0.0, 30.0);
+        let more = ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
+        assert!(more <= DEFAULT_DEPTH * 2.0 + 1e-3 && more > DEFAULT_DEPTH * 1.5, "{more}");
+        ps.set_depth(1.0e9);
+        assert!(ps.piles[0].cols.iter().all(|&c| c <= DEPTH_RANGE.1 + 1e-3));
+    }
+
+    #[test]
+    fn wind_moves_the_drifts_downwind() {
+        let mut ps = Piles::default();
+        full_ground(&mut ps, 0.0, 40.0);
+        let peak = |ps: &Piles| {
+            let g = &ps.piles[0];
+            // Highest column in the middle third, in x.
+            let n = g.cols.len();
+            let i = (n / 3..2 * n / 3).max_by(|&a, &b| g.cols[a].total_cmp(&g.cols[b])).unwrap();
+            g.x0 + i as f32 * g.colw
+        };
+        let x0 = peak(&ps);
+        let mut rng = Rng::with_seed(1);
+        for _ in 0..(5.0 / 0.016) as usize {
+            ps.update(0.016, 1.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+        }
+        let x1 = peak(&ps);
+        // 6 px/s for 5 s.
+        assert!((x1 - x0 - 30.0).abs() < 8.0, "{x0} -> {x1}");
     }
 }

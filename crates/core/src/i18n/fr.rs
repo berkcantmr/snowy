@@ -29,6 +29,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.behind_windows" => "Derrière les fenêtres",
         "settings.behind_windows_hint" => "L’effet reste sur le fond d’écran, sous toutes les applis",
         "settings.keep_windows_clear" => "Garder les fenêtres dégagées",
+        "settings.snow_depth" => "Hauteur de neige maximale",
+        "settings.snow_depth_hint" => "Jusqu’où la neige peut s’accumuler sur la barre des tâches et les fenêtres. Elle forme des congères que le vent déplace lentement.",
         "settings.keep_windows_clear_hint" => "La neige et les pétales ne s’accumulent pas sur les fenêtres ni sur la barre des tâches",
         "settings.snowballs" => "Boules de neige",
         "settings.snowballs_hint" => "Maintenez et faites glisser sur le bureau pour en rouler une, relâchez pour la lancer",

@@ -167,6 +167,16 @@ impl SettingsApp {
             };
             dirty |= toggle_row(ui, &pal, i18n::t(lang, "settings.keep_windows_clear"), hint, &mut self.settings.keep_windows_clear, !behind);
             divider(ui, &pal);
+            dirty |= percent_slider_row(
+                ui,
+                &pal,
+                lang,
+                i18n::t(lang, "settings.snow_depth"),
+                i18n::t(lang, "settings.snow_depth_hint"),
+                &mut self.settings.snow_depth,
+                0.3..=3.0,
+            );
+            divider(ui, &pal);
             dirty |= toggle_row(
                 ui,
                 &pal,

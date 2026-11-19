@@ -29,6 +29,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.behind_windows" => "ウィンドウの背面に表示",
         "settings.behind_windows_hint" => "エフェクトを壁紙の上、すべてのアプリの下に表示します",
         "settings.keep_windows_clear" => "ウィンドウに積もらせない",
+        "settings.snow_depth" => "積雪の最大の高さ",
+        "settings.snow_depth_hint" => "タスクバーやウィンドウに積もる雪の高さの上限です。雪は吹きだまりになり、風でゆっくり動きます。",
         "settings.keep_windows_clear_hint" => "雪や花びらがウィンドウやタスクバーに積もりません",
         "settings.snowballs" => "雪玉",
         "settings.snowballs_hint" => "デスクトップ上で長押ししてドラッグすると雪玉を転がし、離すと投げます",

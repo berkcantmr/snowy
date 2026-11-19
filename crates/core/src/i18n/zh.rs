@@ -29,6 +29,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.behind_windows" => "显示在窗口后面",
         "settings.behind_windows_hint" => "特效保留在壁纸上，位于所有应用下方",
         "settings.keep_windows_clear" => "不在窗口上堆积",
+        "settings.snow_depth" => "最大积雪高度",
+        "settings.snow_depth_hint" => "任务栏和窗口上积雪的最高高度。积雪会形成雪堆，并随风慢慢移动。",
         "settings.keep_windows_clear_hint" => "雪和花瓣不会堆积在窗口和任务栏上",
         "settings.snowballs" => "雪球",
         "settings.snowballs_hint" => "在桌面上按住并拖动可滚出雪球，松开即可扔出",

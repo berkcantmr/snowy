@@ -29,6 +29,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "settings.behind_windows" => "Hinter den Fenstern",
         "settings.behind_windows_hint" => "Der Effekt bleibt auf dem Hintergrundbild, unter allen Apps",
         "settings.keep_windows_clear" => "Fenster frei halten",
+        "settings.snow_depth" => "Maximale Schneehöhe",
+        "settings.snow_depth_hint" => "Wie hoch sich Schnee auf der Taskleiste und auf Fenstern türmen kann. Er bildet Verwehungen, die der Wind langsam weiterschiebt.",
         "settings.keep_windows_clear_hint" => "Schnee und Blüten sammeln sich nicht auf Fenstern und der Taskleiste",
         "settings.snowballs" => "Schneebälle",
         "settings.snowballs_hint" => "Auf dem Desktop gedrückt halten und ziehen, zum Werfen loslassen",

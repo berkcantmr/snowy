@@ -159,6 +159,10 @@ pub trait Effect {
     fn grab_zones(&self, out: &mut Vec<[f32; 4]>) {
         let _ = out;
     }
+    /// Maximum height of ground snow in pixels at 1080p (ledges get half). Default: ignored.
+    fn set_pile_depth(&mut self, depth: f32) {
+        let _ = depth;
+    }
     /// Drain events produced since the last call. Default: none.
     fn take_events(&mut self, out: &mut Vec<WorldEvent>) {
         let _ = out;

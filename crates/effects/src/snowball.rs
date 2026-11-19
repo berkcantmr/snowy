@@ -524,7 +524,7 @@ mod tests {
         let mut piles = Piles::default();
         let mut sb = Snowballs::default();
         let sc = 1.0;
-        piles.update(0.016, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+        piles.update(0.016, 0.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
         piles.piles[0].cols.fill(8.0);
         let before: f32 = piles.piles[0].cols.iter().sum();
         for k in 0..100 {

@@ -10,6 +10,9 @@ mod snowball;
 mod starfall;
 mod util;
 
+/// Default maximum ground snow height in pixels at 1080p (`Effect::set_pile_depth`).
+pub const DEFAULT_PILE_DEPTH: f32 = pile::DEFAULT_DEPTH;
+
 use snowy_core::{Effect, EffectKind};
 
 /// Create an effect sized for an overlay of `width` x `height` physical pixels.

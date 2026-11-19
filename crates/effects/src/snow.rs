@@ -139,7 +139,7 @@ impl Effect for Snow {
         let m = 16.0 * sc;
         let (w, h, t) = (self.w, self.h, self.t);
         let k = (dt * 2.0).min(1.0);
-        self.piles.update(dt, scene.surfaces, scene.ground, w, h, &mut self.rng);
+        self.piles.update(dt, env.wind, scene.surfaces, scene.ground, w, h, &mut self.rng);
         let have_piles = !self.piles.piles.is_empty();
         // Heavy snow already has many more flakes, so each adds less to keep it ~2.5x faster.
         let per_flake = 3.0 * sc / 3.9 * if self.heavy { 0.5 } else { 1.0 };
@@ -159,6 +159,10 @@ impl Effect for Snow {
         self.snowballs_on = scene.snowballs;
         self.balls.update(dt, scene, &mut self.piles, sc, w, h, &mut self.rng);
         self.build();
+    }
+
+    fn set_pile_depth(&mut self, depth: f32) {
+        self.piles.set_depth(depth);
     }
 
     fn clear_accumulation(&mut self) {

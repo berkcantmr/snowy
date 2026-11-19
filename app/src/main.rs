@@ -256,6 +256,7 @@ fn main() -> anyhow::Result<()> {
                         snowballs,
                     };
                     let t0 = Instant::now();
+                    e.set_pile_depth(snowy_effects::DEFAULT_PILE_DEPTH * app.settings.snow_depth);
                     e.update(dt, &env, &scene);
                     let t1 = Instant::now();
                     let r = s.overlay.render(e.as_ref(), time);
@@ -277,8 +278,10 @@ fn main() -> anyhow::Result<()> {
         // Frame pacing. Running: present on vblanks (DwmFlush), aiming at an accumulating
         // deadline so the *average* rate equals the FPS cap even when it isn't a divisor of
         // the refresh rate (60 fps on 144 Hz alternates 2 and 3 vblanks).
+        // Props alone (weather paused or off) animate too, so they get the same pacing.
         // Idle: poll slowly to stay near 0% CPU.
-        if running {
+        let props_animating = props_running && app.screens.iter().any(|s| !s.props.is_empty());
+        if running || props_animating {
             pacer.wait(Duration::from_secs_f32(1.0 / app.settings.max_fps as f32));
         } else {
             std::thread::sleep(Duration::from_millis(250));
