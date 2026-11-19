@@ -3,6 +3,7 @@
 //! - `GET /ws`     WebSocket: login with a key, friend codes, presence, relay (see proto.rs)
 //! - `POST /ping`  anonymous daily usage ping: `{"ver":"0.1.6"}` (counted, nothing stored per user)
 //! - `GET /stats`  daily totals (JSON)
+//! - `GET /dashboard` statistics page
 //! - `GET /health` liveness
 //!
 //! Listens on SNOWY_HUB_ADDR (default 127.0.0.1:8790) behind a Cloudflare tunnel; data in
@@ -71,6 +72,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/ping", post(ping))
         .route("/stats", get(stats))
         .route("/health", get(|| async { "ok" }))
+        .route("/dashboard", get(dashboard))
         .with_state(app)
 }
 
@@ -140,6 +142,11 @@ async fn ping(State(app): State<Arc<App>>, headers: HeaderMap, Json(p): Json<Pin
         Ok(()) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+/// The statistics page (fetches /stats and GitHub's release download counts in the browser).
+async fn dashboard() -> Response {
+    ([("content-type", "text/html; charset=utf-8"), ("cache-control", "public, max-age=300")], include_str!("dashboard.html")).into_response()
 }
 
 async fn stats(State(app): State<Arc<App>>) -> Response {

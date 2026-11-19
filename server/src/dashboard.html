@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snowy istatistikleri</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --page: #f4f3f0;
+  --surface-1: #fcfcfb;
+  --border: #e3e2dd;
+  --grid: #ecebe6;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #77766f;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+}
+@media (prefers-color-scheme: dark) {
+  .viz-root {
+    color-scheme: dark;
+    --page: #121211;
+    --surface-1: #1a1a19;
+    --border: #2c2c2a;
+    --grid: #262624;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8e86;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
+.viz-root { background: var(--page); color: var(--text-primary); min-height: 100vh; padding: 28px 20px 48px; }
+main { max-width: 1040px; margin: 0 auto; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); margin: 0 0 22px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.tile .label { color: var(--text-secondary); font-size: 13px; }
+.tile .value { font-size: 32px; font-weight: 600; letter-spacing: -0.5px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .note { color: var(--text-muted); font-size: 12px; }
+.card h2 { font-size: 15px; margin: 0 0 2px; }
+.card .desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.card.wide { margin-bottom: 12px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font: 11px "Segoe UI", system-ui, sans-serif; fill: var(--text-muted); }
+.legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.tip { position: fixed; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); display: none; z-index: 10; }
+.tip b { display: block; margin-bottom: 2px; }
+.tip .row { display: flex; gap: 8px; align-items: center; color: var(--text-secondary); }
+.tip .row i { width: 8px; height: 8px; border-radius: 2px; }
+.tip .row span:last-child { color: var(--text-primary); font-variant-numeric: tabular-nums; margin-left: auto; padding-left: 12px; }
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: 10px; font-size: 13px; }
+.bar .name { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .track { height: 14px; }
+.bar .fill { height: 14px; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar .num { text-align: right; font-variant-numeric: tabular-nums; }
+.empty { color: var(--text-muted); font-size: 13px; padding: 18px 0; }
+details { margin-top: 10px; color: var(--text-secondary); font-size: 13px; }
+table { border-collapse: collapse; width: 100%; margin-top: 8px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+th { color: var(--text-secondary); font-weight: 600; }
+td.n, th.n { text-align: right; }
+.foot { color: var(--text-muted); font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<main>
+  <h1>Snowy istatistikleri</h1>
+  <p class="sub">Yalnızca günlük toplamlar. Kimlik ya da IP adresi tutulmaz.</p>
+
+  <section class="tiles">
+    <div class="card tile"><div class="label">Bugün kullanan</div><div class="value" id="t-today">–</div><div class="note">anonim günlük sayım</div></div>
+    <div class="card tile"><div class="label">Şu an çevrimiçi</div><div class="value" id="t-online">–</div><div class="note">arkadaş özelliği açık olanlar</div></div>
+    <div class="card tile"><div class="label">Son 30 günde en yüksek</div><div class="value" id="t-peak">–</div><div class="note">bir günde kullanan</div></div>
+    <div class="card tile"><div class="label">Toplam indirme</div><div class="value" id="t-dl">–</div><div class="note">GitHub, tüm sürümler</div></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Günlük kullanıcı</h2>
+    <p class="desc">Anonim sayımı açık olan kurulumlar, günde bir kez (son 90 gün).</p>
+    <div id="c-daily"></div>
+    <details><summary>Tablo olarak göster</summary><div id="tb-daily"></div></details>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Arkadaş özelliği</h2>
+      <p class="desc">Gün içinde bağlanan farklı kişi ve aynı anda en çok çevrimiçi.</p>
+      <div class="legend"><span><i style="background:var(--series-1)"></i>Bağlanan</span><span><i style="background:var(--series-2)"></i>Aynı anda en çok</span></div>
+      <div id="c-hub"></div>
+    </div>
+    <div class="card">
+      <h2>Sürümler (bugün)</h2>
+      <p class="desc">Bugünkü anonim sayımın sürümlere dağılımı.</p>
+      <div id="c-ver" class="bars"></div>
+    </div>
+  </section>
+
+  <section class="card wide">
+    <h2>İndirmeler</h2>
+    <p class="desc">GitHub'da her sürümün kurulum dosyası ve taşınabilir zip toplamı.</p>
+    <div id="c-dl" class="bars"></div>
+  </section>
+
+  <p class="foot" id="foot"></p>
+</main>
+<div class="tip" id="tip"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString("tr-TR");
+const fmtDay = d => new Date(d + "T00:00:00Z").toLocaleDateString("tr-TR", { day: "numeric", month: "short", timeZone: "UTC" });
+const tip = $("tip");
+
+function showTip(e, html) {
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY - h - 10;
+  if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+  if (y < 8) y = e.clientY + 16;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+// Fill missing days so the time axis is even.
+function series(days, n) {
+  const byDay = new Map(days.map(d => [d.day, d]));
+  const out = [];
+  const end = new Date(); end.setUTCHours(0, 0, 0, 0);
+  for (let i = n - 1; i >= 0; i--) {
+    const t = new Date(end - i * 86400000).toISOString().slice(0, 10);
+    out.push(byDay.get(t) || { day: t, pings: 0, hub_users: 0, peak_online: 0, versions: [] });
+  }
+  return out;
+}
+
+function niceMax(v) {
+  if (v <= 4) return 4;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+
+// Line chart: one axis, 2px lines, crosshair + tooltip.
+function lineChart(el, rows, keys, opts) {
+  const W = 1000, H = opts.h || 220, L = 40, R = 12, T = 10, B = 26;
+  const max = niceMax(Math.max(1, ...rows.flatMap(r => keys.map(k => r[k.key]))));
+  const x = i => L + (W - L - R) * (rows.length === 1 ? 0.5 : i / (rows.length - 1));
+  const y = v => T + (H - T - B) * (1 - v / max);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${opts.label}">`;
+  for (let k = 0; k <= 4; k++) {
+    const v = max * k / 4, yy = y(v);
+    s += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--grid)" stroke-width="1"/>`;
+    s += `<text x="${L - 8}" y="${yy + 4}" text-anchor="end">${fmt(Math.round(v))}</text>`;
+  }
+  const step = Math.ceil(rows.length / 6);
+  rows.forEach((r, i) => { if (i % step === 0 || i === rows.length - 1) s += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${fmtDay(r.day)}</text>`; });
+  for (const k of keys) {
+    const pts = rows.map((r, i) => `${x(i).toFixed(1)},${y(r[k.key]).toFixed(1)}`).join(" ");
+    if (keys.length === 1) s += `<polygon points="${L},${y(0)} ${pts} ${x(rows.length - 1)},${y(0)}" fill="${k.color}" opacity="0.10"/>`;
+    s += `<polyline points="${pts}" fill="none" stroke="${k.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  s += `<line id="${el.id}-x" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--text-muted)" stroke-width="1" visibility="hidden"/>`;
+  for (const k of keys) s += `<circle class="${el.id}-dot" r="4" fill="${k.color}" stroke="var(--surface-1)" stroke-width="2" visibility="hidden"/>`;
+  s += `<rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent"/></svg>`;
+  el.innerHTML = s;
+  const svg = el.querySelector("svg"), cross = $(el.id + "-x"), dots = el.querySelectorAll("." + el.id + "-dot");
+  svg.addEventListener("mousemove", e => {
+    const b = svg.getBoundingClientRect();
+    const px = (e.clientX - b.left) * W / b.width;
+    const i = Math.max(0, Math.min(rows.length - 1, Math.round((px - L) / (W - L - R) * (rows.length - 1))));
+    const r = rows[i];
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    keys.forEach((k, j) => { dots[j].setAttribute("cx", x(i)); dots[j].setAttribute("cy", y(r[k.key])); dots[j].setAttribute("visibility", "visible"); });
+    showTip(e, `<b>${fmtDay(r.day)}</b>` + keys.map(k => `<div class="row"><i style="background:${k.color}"></i><span>${k.name}</span><span>${fmt(r[k.key])}</span></div>`).join(""));
+  });
+  svg.addEventListener("mouseleave", () => { hideTip(); cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); });
+}
+
+function barList(el, items, unit) {
+  if (!items.length) { el.innerHTML = `<div class="empty">Henüz veri yok.</div>`; return; }
+  const max = Math.max(...items.map(i => i.value), 1);
+  el.innerHTML = items.map(i => `<div class="bar" data-tip="${i.name}: ${fmt(i.value)} ${unit}"><span class="name">${i.name}</span><span class="track"><div class="fill" style="width:${(i.value / max * 100).toFixed(1)}%"></div></span><span class="num">${fmt(i.value)}</span></div>`).join("");
+  el.querySelectorAll(".bar").forEach(b => {
+    b.addEventListener("mousemove", e => showTip(e, b.dataset.tip));
+    b.addEventListener("mouseleave", hideTip);
+  });
+}
+
+async function load() {
+  const s = await (await fetch("stats", { cache: "no-store" })).json();
+  const daily = series(s.days, 90);
+  const today = daily[daily.length - 1];
+  $("t-today").textContent = fmt(today.pings);
+  $("t-online").textContent = fmt(s.online_now);
+  $("t-peak").textContent = fmt(Math.max(0, ...daily.slice(-30).map(d => d.pings)));
+  lineChart($("c-daily"), daily, [{ key: "pings", name: "Kullanan", color: "var(--series-1)" }], { label: "Günlük kullanıcı, son 90 gün", h: 240 });
+  lineChart($("c-hub"), daily.slice(-30), [
+    { key: "hub_users", name: "Bağlanan", color: "var(--series-1)" },
+    { key: "peak_online", name: "Aynı anda en çok", color: "var(--series-2)" },
+  ], { label: "Arkadaş özelliği, son 30 gün", h: 200 });
+  barList($("c-ver"), (s.days.find(d => d.day === today.day)?.versions || []).map(([v, n]) => ({ name: "v" + v, value: n })), "kullanıcı");
+  const rows = s.days.slice(0, 30);
+  $("tb-daily").innerHTML = rows.length
+    ? `<table><tr><th>Gün</th><th class="n">Kullanan</th><th class="n">Arkadaş özelliği</th><th class="n">Aynı anda en çok</th></tr>` +
+      rows.map(d => `<tr><td>${fmtDay(d.day)}</td><td class="n">${fmt(d.pings)}</td><td class="n">${fmt(d.hub_users)}</td><td class="n">${fmt(d.peak_online)}</td></tr>`).join("") + `</table>`
+    : `<div class="empty">Henüz veri yok.</div>`;
+  $("foot").textContent = "Son güncelleme: " + new Date().toLocaleString("tr-TR") + " · Sayfa her 5 dakikada yenilenir.";
+}
+
+async function loadDownloads() {
+  try {
+    const rel = await (await fetch("https://api.github.com/repos/berkcantmr/snowy/releases?per_page=30")).json();
+    const items = rel.filter(r => !r.draft).map(r => ({
+      name: r.tag_name,
+      value: r.assets.filter(a => !a.name.endsWith(".sha256")).reduce((s, a) => s + a.download_count, 0),
+    }));
+    $("t-dl").textContent = fmt(items.reduce((s, i) => s + i.value, 0));
+    barList($("c-dl"), items, "indirme");
+  } catch {
+    $("c-dl").innerHTML = `<div class="empty">GitHub'a ulaşılamadı.</div>`;
+  }
+}
+
+load(); loadDownloads();
+setInterval(load, 300000);
+</script>
+</body>
+</html>
