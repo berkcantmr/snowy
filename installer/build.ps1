@@ -1,5 +1,5 @@
 # Builds the release exe, then the Inno Setup installer (if ISCC is found) and a portable zip.
-#   -SkipCargo        reuse the existing targetelease\snowy.exe (CI signs it before packaging)
+#   -SkipCargo        reuse the existing target\release\snowy.exe (CI signs it before packaging)
 #   -RequireInstaller fail instead of warning when Inno Setup 6 is missing
 param(
   [switch]$SkipCargo,
@@ -12,8 +12,8 @@ Set-Location $root
 if (-not $SkipCargo) {
   cargo build -p snowy --release
   if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-} elseif (-not (Test-Path 'targetelease\snowy.exe')) {
-  throw "-SkipCargo given but targetelease\snowy.exe does not exist"
+} elseif (-not (Test-Path 'target\release\snowy.exe')) {
+  throw "-SkipCargo given but target\release\snowy.exe does not exist"
 }
 
 $version = (Select-String -Path 'Cargo.toml' -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
