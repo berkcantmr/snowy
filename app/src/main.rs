@@ -267,6 +267,11 @@ fn main() -> anyhow::Result<()> {
         if running && last_scan.elapsed() >= Duration::from_millis(100) {
             last_scan = Instant::now();
             app.scan_surfaces();
+            // Shell menus (taskbar right-click etc.) stay above the snow.
+            let popup = snowy_sys::open_shell_popup();
+            for s in &mut app.screens {
+                s.overlay.stay_under(popup);
+            }
         }
         // Props stay interactive while the weather is paused or off.
         let mut raw = if running || props_running { snowy_sys::pointer_sample() } else { None };

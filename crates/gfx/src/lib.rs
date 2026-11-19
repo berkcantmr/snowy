@@ -17,6 +17,8 @@ pub struct OverlayWindow {
     parent: Option<HWND>,
     behind: bool,
     renderer: Option<d3d::Renderer>,
+    /// The shell pop-up this (topmost) overlay is currently tucked under, if any.
+    under: Option<isize>,
 }
 
 impl OverlayWindow {
@@ -25,7 +27,7 @@ impl OverlayWindow {
     pub fn new(monitor: &MonitorInfo, behind_windows: bool) -> Result<Self> {
         let rect = monitor.rect;
         let hwnd = window::create(rect, true)?;
-        let mut w = OverlayWindow { hwnd, rect, parent: None, behind: false, renderer: None };
+        let mut w = OverlayWindow { hwnd, rect, parent: None, behind: false, renderer: None, under: None };
         // On error `w` drops and destroys the window.
         w.renderer = Some(d3d::Renderer::new(hwnd, rect.2.max(1) as u32, rect.3.max(1) as u32)?);
         if behind_windows {
@@ -88,6 +90,23 @@ impl OverlayWindow {
         match self.renderer.as_mut() {
             Some(r) => r.clear(),
             None => Ok(()),
+        }
+    }
+
+    /// While a shell pop-up (e.g. the taskbar's right-click menu) is open, keep this overlay
+    /// just below it so snow never covers it; `None` puts the overlay back on top. Does
+    /// nothing in behind-windows mode. Only touches the z-order when the answer changes.
+    pub fn stay_under(&mut self, popup: Option<isize>) {
+        if self.behind || self.under == popup {
+            return;
+        }
+        self.under = popup;
+        let after = match popup {
+            Some(h) => HWND(h as *mut _),
+            None => HWND_TOPMOST,
+        };
+        unsafe {
+            let _ = SetWindowPos(self.hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         }
     }
 
