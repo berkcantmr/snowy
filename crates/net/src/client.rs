@@ -2,7 +2,7 @@
 //! keeps `FriendsState` current, sends commands, pings, and reconnects with backoff.
 
 use crate::identity::friend_code;
-use crate::state::{Action, ActionKind, Command, Friend, FriendsState, Status};
+use crate::state::{Action, ActionKind, Command, Friend, FriendsState, SceneMsg, Status};
 use std::collections::HashMap;
 use anyhow::{anyhow, bail, Result};
 use base64::engine::general_purpose::STANDARD as B64;
@@ -32,13 +32,18 @@ pub struct Hub {
     tx: Sender<Ctl>,
     /// Actions friends did on this desktop, decrypted, not yet handled.
     inbox: Arc<Mutex<Vec<(String, Action)>>>,
+    /// Shared desktop messages, decrypted, not yet handled.
+    scene: Arc<Mutex<Vec<(String, SceneMsg)>>>,
 }
 
-/// Inside every relayed message (after decryption).
+/// Inside every relayed message (after decryption): an action or a shared desktop message.
 #[derive(serde::Serialize, Deserialize)]
 struct Envelope {
     v: u32,
-    a: Action,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    a: Option<Action>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    s: Option<SceneMsg>,
 }
 
 impl Hub {
@@ -47,10 +52,15 @@ impl Hub {
         let code = friend_code(&key.verifying_key().to_bytes());
         let state = Arc::new(Mutex::new(FriendsState { status: Status::Connecting, code, rev: 1, ..Default::default() }));
         let (tx, rx) = channel();
-        let (st, inbox) = (state.clone(), Arc::new(Mutex::new(Vec::new())));
-        let ib = inbox.clone();
-        let _ = std::thread::Builder::new().name("snowy-hub".into()).spawn(move || run(key, url, ver, st, ib, rx));
-        Hub { state, tx, inbox }
+        let (st, inbox, scene) = (state.clone(), Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
+        let (ib, sc) = (inbox.clone(), scene.clone());
+        let _ = std::thread::Builder::new().name("snowy-hub".into()).spawn(move || run(key, url, ver, st, ib, sc, rx));
+        Hub { state, tx, inbox, scene }
+    }
+
+    /// Takes the shared desktop messages friends sent since the last call.
+    pub fn take_scene(&self) -> Vec<(String, SceneMsg)> {
+        self.scene.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default()
     }
 
     /// Takes the actions friends sent since the last call: (friend code, action).
@@ -80,13 +90,15 @@ fn update(st: &Mutex<FriendsState>, f: impl FnOnce(&mut FriendsState)) {
     }
 }
 
-fn run(key: SigningKey, url: String, ver: String, st: Arc<Mutex<FriendsState>>, inbox: Arc<Mutex<Vec<(String, Action)>>>, rx: Receiver<Ctl>) {
+type Queue<T> = Arc<Mutex<Vec<(String, T)>>>;
+
+fn run(key: SigningKey, url: String, ver: String, st: Arc<Mutex<FriendsState>>, inbox: Queue<Action>, scene: Queue<SceneMsg>, rx: Receiver<Ctl>) {
     let mut backoff = Duration::from_secs(2);
     let mut sent: HashMap<(String, ActionKind), Instant> = HashMap::new();
     loop {
         update(&st, |s| s.status = Status::Connecting);
         let mut welcomed = false;
-        let mut io = Io { st: &st, inbox: &inbox, rx: &rx, sent: &mut sent };
+        let mut io = Io { st: &st, inbox: &inbox, scene: &scene, rx: &rx, sent: &mut sent };
         match session(&key, &url, &ver, &mut io, &mut welcomed) {
             Ok(()) => break,
             Err(e) => log::info!("friends server: {e}"),
@@ -163,6 +175,7 @@ fn expect(ws: &mut Ws, what: &str, f: impl Fn(&In) -> bool) -> Result<In> {
 struct Io<'a> {
     st: &'a Mutex<FriendsState>,
     inbox: &'a Mutex<Vec<(String, Action)>>,
+    scene: &'a Mutex<Vec<(String, SceneMsg)>>,
     rx: &'a Receiver<Ctl>,
     /// Last time each action went to each friend (sender-side rate limit).
     sent: &'a mut HashMap<(String, ActionKind), Instant>,
@@ -183,26 +196,42 @@ fn send_action(ws: &mut Ws, key: &SigningKey, io: &mut Io, to: String, action: A
         update(io.st, |s| s.last_error = Some("slow_down".into()));
         return Ok(());
     }
-    let plain = serde_json::to_vec(&Envelope { v: 1, a: action })?;
+    let plain = serde_json::to_vec(&Envelope { v: 1, a: Some(action), s: None })?;
     let data = crate::e2e::seal(key, &peer, &plain)?;
     send(ws, serde_json::json!({ "t": "relay", "to": to, "data": data }))?;
     io.sent.insert(k, Instant::now());
     Ok(())
 }
 
+/// Encrypts a shared desktop message for a friend.
+fn send_scene(ws: &mut Ws, key: &SigningKey, io: &Io, to: String, msg: SceneMsg) -> Result<()> {
+    let Some(peer) = friend_key(io.st, &to) else { return Ok(()) };
+    let plain = serde_json::to_vec(&Envelope { v: 1, a: None, s: Some(msg) })?;
+    let data = crate::e2e::seal(key, &peer, &plain)?;
+    send(ws, serde_json::json!({ "t": "relay", "to": to, "data": data }))
+}
+
+fn push<T>(q: &Mutex<Vec<(String, T)>>, from: String, item: T, cap: usize) {
+    if let Ok(mut v) = q.lock() {
+        if v.len() < cap {
+            v.push((from, item));
+        }
+    }
+}
+
 /// A relayed message from a friend: decrypt, check, queue.
 fn receive(key: &SigningKey, io: &Io, from: String, data: &str) {
     let Some(peer) = friend_key(io.st, &from) else { return };
-    let action = crate::e2e::open(key, &peer, data).ok().and_then(|b| serde_json::from_slice::<Envelope>(&b).ok()).filter(|e| e.v == 1).map(|e| e.a.sanitized());
-    match action {
-        Some(a) => {
-            if let Ok(mut v) = io.inbox.lock() {
-                if v.len() < 64 {
-                    v.push((from, a));
-                }
+    let env = crate::e2e::open(key, &peer, data).ok().and_then(|b| serde_json::from_slice::<Envelope>(&b).ok()).filter(|e| e.v == 1);
+    match env {
+        Some(Envelope { a: Some(a), .. }) => push(io.inbox, from, a.sanitized(), 64),
+        Some(Envelope { s: Some(mut s), .. }) => {
+            if let SceneMsg::Upsert { prop } = &mut s {
+                snowy_core::props::sanitize_prop(prop);
             }
+            push(io.scene, from, s, 512);
         }
-        None => log::info!("friends: dropped a message from {from} that didn't open"),
+        _ => log::info!("friends: dropped a message from {from} that didn't open"),
     }
 }
 
@@ -232,6 +261,8 @@ fn session(key: &SigningKey, url: &str, ver: &str, io: &mut Io, welcomed: &mut b
                     update(st, |s| s.last_error = None);
                     send_action(&mut ws, key, io, to, action)?;
                 }
+                Ok(Ctl::Cmd(Command::Scene { to, msg })) => send_scene(&mut ws, key, io, to, msg)?,
+                Ok(Ctl::Cmd(c)) if c.is_share() => {}
                 Ok(Ctl::Cmd(c)) => {
                     update(st, |s| s.last_error = None);
                     send(&mut ws, serde_json::to_value(&c)?)?;

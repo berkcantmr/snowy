@@ -4,7 +4,7 @@
 use eframe::egui::{self, vec2, Align, Color32, Key, Layout, RichText, Sense};
 use snowy_core::config::Settings;
 use snowy_core::i18n;
-use snowy_net::state::{self as net, Action, Command, FriendsState, Perms, Status};
+use snowy_net::state::{self as net, Action, Command, FriendsState, Perms, ShareStatus, SharedState, Status};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
@@ -24,6 +24,9 @@ pub struct FriendsUi {
     names: BTreeMap<String, String>,
     /// What each friend may do here (friend-perms.json).
     perms: BTreeMap<String, Perms>,
+    /// Shared desktop state (shared.json, written by the app).
+    shared: SharedState,
+    shared_mtime: Option<SystemTime>,
     mtime: Option<SystemTime>,
     polled: Option<Instant>,
     add_text: String,
@@ -42,6 +45,8 @@ impl Default for FriendsUi {
             state: net::load_state(&dir),
             names: net::load_names(&dir),
             perms: net::load_perms(&dir),
+            shared: net::load_shared(&dir),
+            shared_mtime: None,
             mtime: None,
             polled: None,
             dir,
@@ -65,6 +70,11 @@ impl FriendsUi {
         if m != self.mtime {
             self.mtime = m;
             self.state = net::load_state(&self.dir);
+        }
+        let m = std::fs::metadata(net::shared_path(&self.dir)).and_then(|m| m.modified()).ok();
+        if m != self.shared_mtime {
+            self.shared_mtime = m;
+            self.shared = net::load_shared(&self.dir);
         }
     }
 
@@ -147,6 +157,42 @@ impl SettingsApp {
         if !self.settings.friends {
             ui.add(egui::Label::new(RichText::new(i18n::t(lang, "friends.off_note")).color(pal.text_weak)).wrap());
             return dirty;
+        }
+
+        // Shared desktop: a request, a pending invite or an active share.
+        if let (Some(with), true) = (f.shared.with.clone(), f.shared.status != ShareStatus::None) {
+            let name = f.names.get(&with).filter(|n| !n.is_empty()).cloned().unwrap_or_else(|| with.clone());
+            card(ui, &pal, |ui| {
+                ui.label(RichText::new(i18n::t(lang, "friends.share_title")).semi());
+                let key = match f.shared.status {
+                    ShareStatus::Asked => "friends.share_asked",
+                    ShareStatus::Invited => "friends.share_waiting",
+                    _ => "friends.share_active",
+                };
+                ui.add(egui::Label::new(i18n::t(lang, key).replace("{name}", &name)).wrap());
+                ui.label(RichText::new(i18n::t(lang, "friends.share_hint")).small().color(pal.text_weak));
+                ui.horizontal(|ui| match f.shared.status {
+                    ShareStatus::Asked => {
+                        let ok = egui::Button::new(RichText::new(i18n::t(lang, "friends.accept")).color(pal.on_accent)).fill(pal.accent);
+                        if ui.add(ok.min_size(vec2(0.0, 28.0))).clicked() {
+                            f.send(Command::ShareAccept { code: with.clone() });
+                        }
+                        if ui.add(egui::Button::new(i18n::t(lang, "friends.decline")).min_size(vec2(0.0, 28.0))).clicked() {
+                            f.send(Command::ShareDecline { code: with.clone() });
+                        }
+                    }
+                    ShareStatus::Invited => {
+                        if ui.add(egui::Button::new(i18n::t(lang, "friends.cancel")).min_size(vec2(0.0, 28.0))).clicked() {
+                            f.send(Command::ShareStop);
+                        }
+                    }
+                    _ => {
+                        if ui.add(egui::Button::new(i18n::t(lang, "friends.share_stop")).min_size(vec2(0.0, 28.0))).clicked() {
+                            f.send(Command::ShareStop);
+                        }
+                    }
+                });
+            });
         }
 
         // Your code.
@@ -339,6 +385,13 @@ impl SettingsApp {
                             let gift = egui::Button::new(i18n::t(lang, "friends.gift")).min_size(vec2(0.0, 26.0));
                             if ui.add(gift).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
                                 f.send(Command::Send { to: code.clone(), action: Action::Gift });
+                            }
+                            // One shared desktop at a time.
+                            let free = f.shared.status == ShareStatus::None;
+                            let share = egui::Button::new(i18n::t(lang, "friends.share")).min_size(vec2(0.0, 26.0));
+                            if ui.add_enabled(free, share).on_hover_text(i18n::t(lang, "friends.share_hint")).clicked() {
+                                f.send(Command::ShareInvite { code: code.clone() });
+                                f.shared = SharedState { with: Some(code.clone()), status: ShareStatus::Invited };
                             }
                         });
                     });

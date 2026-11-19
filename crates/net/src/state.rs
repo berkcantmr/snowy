@@ -55,6 +55,68 @@ pub enum Command {
     Remove { code: String },
     /// Do something on a friend's desktop (sent end-to-end encrypted).
     Send { to: String, action: Action },
+    /// Shared desktop, from the settings window; handled by the app (see `SharedState`).
+    ShareInvite { code: String },
+    ShareAccept { code: String },
+    ShareDecline { code: String },
+    ShareStop,
+    /// Shared desktop message for a friend (sent by the app itself, end-to-end encrypted).
+    Scene { to: String, msg: SceneMsg },
+}
+
+impl Command {
+    /// True for commands the app handles itself instead of passing to the server.
+    pub fn is_share(&self) -> bool {
+        matches!(self, Command::ShareInvite { .. } | Command::ShareAccept { .. } | Command::ShareDecline { .. } | Command::ShareStop)
+    }
+}
+
+/// Shared desktop messages between two friends.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SceneMsg {
+    /// "Let's share our desktops."
+    Invite,
+    Accept,
+    Decline,
+    /// Sharing ends; both go back to their own decorations.
+    Stop,
+    /// A decoration was added or changed.
+    Upsert { prop: snowy_core::props::Prop },
+    Remove { id: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShareStatus {
+    #[default]
+    None,
+    /// This person invited `with`; waiting for an answer.
+    Invited,
+    /// `with` invited this person.
+    Asked,
+    /// Sharing with `with`.
+    Active,
+}
+
+/// The shared desktop, as the app last wrote it (`shared.json`, read by the settings window).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SharedState {
+    pub with: Option<String>,
+    pub status: ShareStatus,
+}
+
+pub fn shared_path(dir: &Path) -> PathBuf {
+    dir.join("shared.json")
+}
+
+pub fn load_shared(dir: &Path) -> SharedState {
+    std::fs::read(shared_path(dir)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+pub fn save_shared(dir: &Path, s: &SharedState) -> std::io::Result<()> {
+    write_json(&shared_path(dir), s)
 }
 
 /// Something one friend does on the other's desktop. Only these fixed shapes exist: no text,
@@ -204,6 +266,15 @@ pub fn take_commands(dir: &Path) -> Vec<Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn share_commands_parse() {
+        let c: Command = serde_json::from_str(r#"{"t":"share_invite","code":"EMFM-SAM6"}"#).unwrap();
+        assert_eq!(c, Command::ShareInvite { code: "EMFM-SAM6".into() });
+        assert!(c.is_share());
+        let c: Command = serde_json::from_str(r#"{"t":"share_stop"}"#).unwrap();
+        assert_eq!(c, Command::ShareStop);
+    }
 
     #[test]
     fn commands_round_trip_in_order() {

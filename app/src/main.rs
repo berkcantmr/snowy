@@ -3,6 +3,8 @@
 //! Snowy: desktop weather effects. Main process = tray + overlays + render loop.
 //! `snowy.exe --settings [--page about]` = settings window process.
 
+mod shared;
+
 use snowy_core::config::Settings;
 use snowy_core::{i18n, Effect, EffectChoice, EffectKind, Env, MonitorInfo, Pointer, Scene, Surface, WorldEvent};
 use snowy_props::{Action, Layer};
@@ -38,6 +40,8 @@ struct App {
     friends: Option<snowy_net::Hub>,
     /// Revision of the friends state last written to friends.json.
     friends_rev: u64,
+    /// Desktop shared with a friend.
+    shared: shared::SharedDesktop,
     /// When each friend last did each kind of action here (receiver-side rate limit).
     friend_actions: std::collections::HashMap<(String, snowy_net::state::ActionKind), Instant>,
     /// The snowball notice on screen: from whom, how many so far, when the last one came.
@@ -137,6 +141,7 @@ fn main() -> anyhow::Result<()> {
         friends: None,
         friends_rev: 0,
         friend_actions: std::collections::HashMap::new(),
+        shared: shared::SharedDesktop::load(&Settings::dir()),
         snowball_notice: None,
         usage_busy: Default::default(),
         screens: Vec::new(),
@@ -658,11 +663,44 @@ impl App {
         }
         let commands = snowy_net::state::take_commands(&dir);
         if let Some(hub) = &self.friends {
+            let monitor = self.screens.iter().find(|s| s.monitor.primary).map(|s| s.monitor.id.clone()).unwrap_or_default();
+            let mut out = Vec::new();
+            let mut notices = Vec::new();
             for c in commands {
-                hub.send(c);
+                if c.is_share() {
+                    notices.extend(self.shared.command(&c, &monitor, &mut out));
+                } else {
+                    hub.send(c);
+                }
             }
             let incoming = hub.take_incoming();
+            let scene = hub.take_scene();
             let st = hub.state();
+            let changed = !scene.is_empty();
+            for (from, msg) in scene {
+                notices.extend(self.shared.message(&from, msg, &monitor, &mut out));
+            }
+            // Sharing with someone who is no longer a friend ends it.
+            if st.status == snowy_net::Status::Online {
+                if let Some(w) = self.shared.state().with.clone() {
+                    if !st.friends.iter().any(|f| f.code == w) {
+                        self.shared.command(&snowy_net::Command::ShareStop, &monitor, &mut Vec::new());
+                    }
+                }
+            }
+            self.shared.tick(&monitor, |c| st.friends.iter().any(|f| f.code == c && f.online), &mut out);
+            for (to, msg) in out {
+                hub.send(snowy_net::Command::Scene { to, msg });
+            }
+            if changed || !notices.is_empty() {
+                // Show friends' changes right away instead of at the next 1 s reload.
+                for s in &mut self.screens {
+                    s.props.poll_reload();
+                }
+            }
+            if !notices.is_empty() {
+                self.share_notices(&dir, notices);
+            }
             if !incoming.is_empty() {
                 self.friend_actions_arrived(&dir, incoming);
             }
@@ -671,6 +709,23 @@ impl App {
                 if let Err(e) = snowy_net::state::save_state(&dir, &st) {
                     log::warn!("friends: writing state: {e}");
                 }
+            }
+        }
+    }
+
+    fn share_notices(&mut self, dir: &std::path::Path, notices: Vec<shared::Notice>) {
+        let names = snowy_net::state::load_names(dir);
+        let lang = lang_of(&self.settings);
+        for n in notices {
+            let (key, who) = match &n {
+                shared::Notice::Asked(c) => ("toast.share_asked", c),
+                shared::Notice::Started(c) => ("toast.share_started", c),
+                shared::Notice::Stopped(c) => ("toast.share_stopped", c),
+            };
+            let name = names.get(who).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| who.clone());
+            let text = i18n::t(&lang, key).replace("{name}", &name);
+            if let Some(t) = &mut self.toast {
+                t.show(snowy_sys::ToastIcon::Friend, &text, &[], None);
             }
         }
     }
