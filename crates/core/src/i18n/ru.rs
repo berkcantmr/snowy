@@ -126,6 +126,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "editor.slot.topper" => "Верхушка",
         "editor.slot.garland" => "Мишура",
         "editor.balls" => "Количество комов",
+        "editor.name" => "Имя",
+        "editor.name_hint" => "Дайте ему имя",
         "editor.balls_2" => "2 кома",
         "editor.balls_3" => "3 кома",
         "editor.size" => "Размер",

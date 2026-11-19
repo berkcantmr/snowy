@@ -86,6 +86,27 @@ pub struct PropsFile {
     pub props: Vec<Prop>,
     /// Local calendar day (days since the Unix epoch) of the last daily gift; 0 = never.
     pub last_gift_day: u32,
+    /// Names the user gave snowmen, by prop id. Only shown in the snowman's editor.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub names: std::collections::BTreeMap<u64, String>,
+}
+
+/// Longest snowman name, in characters.
+pub const MAX_NAME: usize = 24;
+
+impl PropsFile {
+    /// Sets (or with an empty/blank name, removes) a prop's name. Returns true if it changed.
+    pub fn set_name(&mut self, id: u64, name: &str) -> bool {
+        let name: String = name.trim().chars().filter(|c| !c.is_control()).take(MAX_NAME).collect();
+        if name.is_empty() {
+            self.names.remove(&id).is_some()
+        } else if self.names.get(&id) != Some(&name) {
+            self.names.insert(id, name);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Look slot names for UI / i18n: "look.<slot>.<index>" keys.
@@ -212,6 +233,24 @@ impl PropsFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snowman_names_are_kept_trimmed_and_optional() {
+        let mut f = PropsFile::default();
+        assert!(f.set_name(7, "  Kardan Kardeş \n"));
+        assert_eq!(f.names.get(&7).map(String::as_str), Some("Kardan Kardeş"));
+        assert!(!f.set_name(7, "Kardan Kardeş"), "same name is no change");
+        assert!(f.set_name(8, &"x".repeat(100)));
+        assert_eq!(f.names[&8].chars().count(), MAX_NAME);
+        // Round trip through JSON; files without names still load.
+        let back: PropsFile = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert_eq!(back, f);
+        let old: PropsFile = serde_json::from_str(r#"{"props":[],"last_gift_day":3}"#).unwrap();
+        assert!(old.names.is_empty());
+        assert!(!serde_json::to_string(&old).unwrap().contains("names"));
+        assert!(f.set_name(7, "   "), "blank removes it");
+        assert!(!f.names.contains_key(&7));
+    }
 
     #[test]
     fn path_is_sanitized() {

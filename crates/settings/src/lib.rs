@@ -41,6 +41,13 @@ pub fn run_demo(
     run_inner(monitors, auto_close, page_cycle, state::Page::default())
 }
 
+/// Demo helper: opens one page (by id) even while a real settings window is open, closing
+/// after `auto_close`. Used for screenshots.
+#[doc(hidden)]
+pub fn run_page_demo(monitors: Vec<MonitorInfo>, page: &str, auto_close: Option<std::time::Duration>) -> anyhow::Result<()> {
+    run_window(monitors, auto_close, None, state::Page::from_id(page).unwrap_or_default())
+}
+
 fn run_inner(
     monitors: Vec<MonitorInfo>,
     auto_close: Option<std::time::Duration>,
@@ -50,6 +57,15 @@ fn run_inner(
     let Some(_guard) = win::acquire_single_instance() else {
         return Ok(());
     };
+    run_window(monitors, auto_close, page_cycle, page)
+}
+
+fn run_window(
+    monitors: Vec<MonitorInfo>,
+    auto_close: Option<std::time::Duration>,
+    page_cycle: Option<std::time::Duration>,
+    page: state::Page,
+) -> anyhow::Result<()> {
     let settings = snowy_core::config::Settings::load();
     let lang = state::effective_lang(&settings.language, win::windows_locale().as_deref());
     let title = snowy_core::i18n::t(lang, "settings.title");

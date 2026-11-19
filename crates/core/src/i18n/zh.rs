@@ -126,6 +126,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "editor.slot.topper" => "树顶",
         "editor.slot.garland" => "彩带",
         "editor.balls" => "雪球数量",
+        "editor.name" => "名字",
+        "editor.name_hint" => "给它起个名字",
         "editor.balls_2" => "2 个球",
         "editor.balls_3" => "3 个球",
         "editor.size" => "大小",

@@ -335,69 +335,65 @@ impl SettingsApp {
                             f.editing = None;
                         }
                     } else {
-                        ui.vertical(|ui| {
-                            match &nick {
-                                Some(n) => {
-                                    ui.label(RichText::new(n).semi());
-                                    ui.add_space(-4.0);
-                                    ui.label(RichText::new(&code).small().monospace().color(pal.text_weak));
-                                }
-                                None => {
-                                    ui.label(RichText::new(&code).monospace());
-                                }
+                        // The name has the whole line (cut with "…" if it still doesn't fit);
+                        // the buttons are on the line below.
+                        ui.with_layout(Layout::top_down(Align::Min), |ui| match &nick {
+                            Some(n) => {
+                                ui.add(egui::Label::new(RichText::new(n).semi()).truncate());
+                                ui.add_space(-4.0);
+                                ui.add(egui::Label::new(RichText::new(&code).small().monospace().color(pal.text_weak)).truncate());
                             }
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let armed = f.confirm.as_ref().is_some_and(|(c, _)| *c == code);
-                            let b = if armed {
-                                egui::Button::new(RichText::new(i18n::t(lang, "friends.sure")).semi().color(pal.on_accent)).fill(pal.danger)
-                            } else {
-                                egui::Button::new(i18n::t(lang, "friends.remove"))
-                            };
-                            if ui.add(b.min_size(vec2(0.0, 26.0))).clicked() {
-                                if armed {
-                                    f.send(Command::Remove { code: code.clone() });
-                                    f.confirm = None;
-                                    if f.names.contains_key(&code) {
-                                        f.set_name(&code, "");
-                                    }
-                                } else {
-                                    f.confirm = Some((code.clone(), Instant::now()));
-                                }
-                            }
-                            if ui.add(egui::Button::new(i18n::t(lang, "friends.rename")).min_size(vec2(0.0, 26.0))).clicked() {
-                                f.editing = Some((code.clone(), nick.clone().unwrap_or_default()));
-                                f.confirm = None;
+                            None => {
+                                ui.add(egui::Label::new(RichText::new(&code).monospace()).truncate());
                             }
                         });
                     }
                 });
                 if !editing {
-                    // Things to do on their desktop (while they're online) ...
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
-                        ui.add_enabled_ui(friend.online, |ui| {
-                            let throw = egui::Button::new(i18n::t(lang, "friends.throw")).min_size(vec2(0.0, 26.0));
-                            if ui.add(throw).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
-                                let x = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.subsec_millis() as f32 / 1000.0).unwrap_or(0.5);
-                                f.send(Command::Send { to: code.clone(), action: Action::Snowball { x: 0.1 + 0.8 * x } });
+                    // Things to do on their desktop (while they're online); wraps onto a
+                    // second line in a narrow window ...
+                    ui.horizontal_wrapped(|ui| {
+                        let online = friend.online;
+                        let throw = egui::Button::new(i18n::t(lang, "friends.throw")).min_size(vec2(0.0, 26.0));
+                        if ui.add_enabled(online, throw).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
+                            let x = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.subsec_millis() as f32 / 1000.0).unwrap_or(0.5);
+                            f.send(Command::Send { to: code.clone(), action: Action::Snowball { x: 0.1 + 0.8 * x } });
+                        }
+                        let gift = egui::Button::new(i18n::t(lang, "friends.gift")).min_size(vec2(0.0, 26.0));
+                        if ui.add_enabled(online, gift).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
+                            f.send(Command::Send { to: code.clone(), action: Action::Gift });
+                        }
+                        // One shared desktop at a time.
+                        let free = online && f.shared.status == ShareStatus::None;
+                        let share = egui::Button::new(i18n::t(lang, "friends.share")).min_size(vec2(0.0, 26.0));
+                        if ui.add_enabled(free, share).on_hover_text(i18n::t(lang, "friends.share_hint")).clicked() {
+                            f.send(Command::ShareInvite { code: code.clone() });
+                            f.shared = SharedState { with: Some(code.clone()), status: ShareStatus::Invited };
+                        }
+                        if ui.add(egui::Button::new(i18n::t(lang, "friends.rename")).min_size(vec2(0.0, 26.0))).clicked() {
+                            f.editing = Some((code.clone(), nick.clone().unwrap_or_default()));
+                            f.confirm = None;
+                        }
+                        let armed = f.confirm.as_ref().is_some_and(|(c, _)| *c == code);
+                        let b = if armed {
+                            egui::Button::new(RichText::new(i18n::t(lang, "friends.sure")).semi().color(pal.on_accent)).fill(pal.danger)
+                        } else {
+                            egui::Button::new(i18n::t(lang, "friends.remove"))
+                        };
+                        if ui.add(b.min_size(vec2(0.0, 26.0))).clicked() {
+                            if armed {
+                                f.send(Command::Remove { code: code.clone() });
+                                f.confirm = None;
+                                if f.names.contains_key(&code) {
+                                    f.set_name(&code, "");
+                                }
+                            } else {
+                                f.confirm = Some((code.clone(), Instant::now()));
                             }
-                            let gift = egui::Button::new(i18n::t(lang, "friends.gift")).min_size(vec2(0.0, 26.0));
-                            if ui.add(gift).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
-                                f.send(Command::Send { to: code.clone(), action: Action::Gift });
-                            }
-                            // One shared desktop at a time.
-                            let free = f.shared.status == ShareStatus::None;
-                            let share = egui::Button::new(i18n::t(lang, "friends.share")).min_size(vec2(0.0, 26.0));
-                            if ui.add_enabled(free, share).on_hover_text(i18n::t(lang, "friends.share_hint")).clicked() {
-                                f.send(Command::ShareInvite { code: code.clone() });
-                                f.shared = SharedState { with: Some(code.clone()), status: ShareStatus::Invited };
-                            }
-                        });
+                        }
                     });
                     // ... and what they may do on this one.
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
+                    ui.horizontal_wrapped(|ui| {
                         let mut p = f.perms.get(&code).copied().unwrap_or_default();
                         let before = p;
                         ui.checkbox(&mut p.snowballs, RichText::new(i18n::t(lang, "friends.allow_snowballs")).small());

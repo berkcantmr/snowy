@@ -126,6 +126,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "editor.slot.topper" => "トップ",
         "editor.slot.garland" => "ガーランド",
         "editor.balls" => "雪玉の数",
+        "editor.name" => "名前",
+        "editor.name_hint" => "名前をつける",
         "editor.balls_2" => "2 段",
         "editor.balls_3" => "3 段",
         "editor.size" => "サイズ",

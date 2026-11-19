@@ -11,6 +11,10 @@ pub fn find_prop(file: &PropsFile, id: u64) -> Option<Prop> {
     file.props.iter().find(|p| p.id == id).copied()
 }
 
+pub fn is_snowman(kind: &PropKind) -> bool {
+    matches!(kind, PropKind::Snowman { .. })
+}
+
 pub fn is_tree(kind: &PropKind) -> bool {
     matches!(kind, PropKind::Tree { .. })
 }
@@ -37,6 +41,7 @@ pub fn merge_edit(file: &mut PropsFile, edited: &Prop) -> bool {
 pub fn remove_prop(file: &mut PropsFile, id: u64) -> bool {
     let before = file.props.len();
     file.props.retain(|p| p.id != id);
+    file.names.remove(&id);
     file.props.len() != before
 }
 

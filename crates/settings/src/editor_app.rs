@@ -28,6 +28,8 @@ pub struct EditorApp {
     rng: logic::Rng,
     deleted: bool,
     was_focused: bool,
+    /// The snowman's name as typed (saved with the look).
+    name: String,
 }
 
 /// What the user did in one frame.
@@ -43,7 +45,9 @@ impl EditorApp {
     pub fn new(ctx: &egui::Context, monitor_id: String, prop: Option<Prop>, lang: &'static str, auto_close: Option<Duration>) -> Self {
         let pal = theme::palette(crate::win::system_prefers_dark());
         theme::apply(ctx, &pal);
+        let name = prop.and_then(|p| PropsFile::load(&monitor_id).names.get(&p.id).cloned()).unwrap_or_default();
         Self {
+            name,
             monitor_id,
             prop,
             lang,
@@ -72,7 +76,8 @@ impl EditorApp {
         }
         let Some(prop) = &self.prop else { return };
         let mut file = PropsFile::load(&self.monitor_id);
-        if logic::merge_edit(&mut file, prop) {
+        let named = logic::is_snowman(&prop.kind) && file.set_name(prop.id, &self.name);
+        if logic::merge_edit(&mut file, prop) || named {
             match file.save(&self.monitor_id) {
                 Ok(()) => {
                     let now = self.now();
@@ -333,6 +338,20 @@ impl EditorApp {
         // Controls card.
         crate::ui::card(ui, &pal, |ui| {
             if let PropKind::Snowman { balls, .. } = prop.kind {
+                // Its name: only shown here, never on the desktop.
+                ui.horizontal(|ui| {
+                    ui.label(i18n::t(lang, "editor.name"));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let w = (ui.available_width() - 8.0).clamp(120.0, 260.0);
+                        let edit = egui::TextEdit::singleline(&mut self.name)
+                            .hint_text(i18n::t(lang, "editor.name_hint"))
+                            .char_limit(snowy_core::props::MAX_NAME);
+                        if ui.add_sized(vec2(w, 28.0), edit).changed() {
+                            act.changed = true;
+                        }
+                    });
+                });
+                crate::ui::divider(ui, &pal);
                 ui.horizontal(|ui| {
                     ui.label(i18n::t(lang, "editor.balls"));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

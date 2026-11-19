@@ -290,7 +290,7 @@ mod tests {
             self.sd.load_props(&self.monitor).props
         }
         fn set_props(&self, props: Vec<Prop>) {
-            self.sd.save_props(&self.monitor, &PropsFile { props, last_gift_day: 0 }).unwrap();
+            self.sd.save_props(&self.monitor, &PropsFile { props, ..Default::default() }).unwrap();
         }
     }
 

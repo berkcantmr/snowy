@@ -126,6 +126,8 @@ pub fn get(key: &str) -> Option<&'static str> {
         "editor.slot.topper" => "Tepelik",
         "editor.slot.garland" => "Girlant",
         "editor.balls" => "Kar topu sayısı",
+        "editor.name" => "Adı",
+        "editor.name_hint" => "Bir isim ver",
         "editor.balls_2" => "2 top",
         "editor.balls_3" => "3 top",
         "editor.size" => "Boyut",
