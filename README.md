@@ -67,7 +67,7 @@ graphics), so the discrete GPU can stay asleep. `SNOWY_GPU=performance` picks th
 
 ## Privacy
 
-Snowy has no accounts and no analytics. It uses the network for four things only:
+Snowy has no accounts, no ads and no tracking. It uses the network for four things only:
 
 - **Update check** (on by default; turn it off under Settings > System > "Check for
   updates"): about once a day it asks GitHub's public API for the latest release of this
@@ -84,6 +84,8 @@ Snowy has no accounts and no analytics. It uses the network for four things only
   on your computer and connects to `snowy.berkcantumer.dev`. The server stores your public
   key, the friend code derived from it, your friendships and pending requests. Nicknames you
   give friends stay on your computer. No IP addresses are stored.
+
+The last two go through Cloudflare, which carries the connection and, like any website host, sees your IP address; the Snowy server itself does not store it.
 
 Nothing else leaves your computer. The installer shows this notice before installing.
 
