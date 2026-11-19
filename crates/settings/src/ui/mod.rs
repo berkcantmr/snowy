@@ -2,6 +2,7 @@
 
 pub mod art_paint;
 pub mod cards;
+pub mod friends;
 pub mod icons;
 pub mod pages;
 pub mod theme;

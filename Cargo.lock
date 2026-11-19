@@ -2997,6 +2997,7 @@ dependencies = [
  "eframe",
  "snowy-art",
  "snowy-core",
+ "snowy-net",
  "snowy-update",
  "snowy-wallpaper",
  "snowy-weather",

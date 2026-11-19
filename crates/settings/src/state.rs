@@ -171,12 +171,14 @@ pub enum Page {
     Appearance,
     Desktop,
     Wallpapers,
+    Friends,
     System,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 6] = [Page::Effects, Page::Appearance, Page::Desktop, Page::Wallpapers, Page::System, Page::About];
+    pub const ALL: [Page; 7] =
+        [Page::Effects, Page::Appearance, Page::Desktop, Page::Wallpapers, Page::Friends, Page::System, Page::About];
 
     /// Page for a command-line id such as `--page about`.
     pub fn from_id(id: &str) -> Option<Page> {
@@ -185,6 +187,7 @@ impl Page {
             "appearance" => Page::Appearance,
             "desktop" => Page::Desktop,
             "wallpapers" => Page::Wallpapers,
+            "friends" => Page::Friends,
             "system" => Page::System,
             "about" => Page::About,
             _ => return None,
@@ -197,6 +200,7 @@ impl Page {
             Page::Appearance => "page.appearance",
             Page::Desktop => "page.desktop",
             Page::Wallpapers => "page.wallpapers",
+            Page::Friends => "page.friends",
             Page::System => "page.system",
             Page::About => "page.about",
         }
@@ -498,7 +502,8 @@ mod tests {
 
     #[test]
     fn page_cycle() {
-        assert_eq!(Page::ALL.len(), 6);
+        assert_eq!(Page::ALL.len(), 7);
+        assert_eq!(Page::from_id("friends"), Some(Page::Friends));
         assert_eq!(Page::default(), Page::Effects);
         assert_eq!(Page::from_id("about"), Some(Page::About));
         assert_eq!(Page::from_id("ABOUT"), Some(Page::About));

@@ -6,4 +6,10 @@ Snowy works offline, with these exceptions:
 
 2. "Match my weather" (optional). Only when you choose this feature, Snowy looks up your rough location from your IP address (ip-api.com, falling back to ipapi.co) and then fetches the current weather for those rounded coordinates from Open-Meteo (api.open-meteo.com).
 
-Snowy has no telemetry, no analytics and no accounts. Nothing else is sent anywhere.
+3. Anonymous usage count. Once a day Snowy sends only its version number to snowy.berkcantumer.dev, so we can count how many people use Snowy. This is on by default and can be turned off in Settings > System > Send anonymous usage count. The server only adds the version to that day's totals; it keeps no IP addresses and nothing that identifies you.
+
+4. Friends (optional, off unless you turn it on in Settings > Friends). When on, Snowy creates a key pair on your computer and connects to snowy.berkcantumer.dev. The server stores your public key, the friend code derived from it, your friendships and pending friend requests. Nicknames you give friends stay on your computer. No IP addresses are stored.
+
+Items 3 and 4 go through Cloudflare, which carries the connection and, like any website host, sees your IP address; the Snowy server itself does not store it.
+
+Snowy has no accounts, no ads and no tracking. Nothing else is sent anywhere.
