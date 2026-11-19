@@ -67,25 +67,38 @@ graphics), so the discrete GPU can stay asleep. `SNOWY_GPU=performance` picks th
 
 ## Privacy
 
-Snowy works fully offline by default. Two features use the network. "Match my weather"
-(opt-in) makes an IP-based rough location lookup and then queries
-[Open-Meteo](https://open-meteo.com/). The update check (on by default, can be turned off)
-asks GitHub's public API for the latest release of this repository; the request carries only
-the app name and version (`Snowy/<version>`) as User-Agent, plus the IP address any web
-request has. The local `update.json` keeps the last check time and version numbers only.
-Nothing else is sent, and there is no telemetry.
+Snowy has no accounts and no telemetry. It uses the network for two things only:
+
+- **Update check** (on by default; turn it off under Settings > System > "Check for
+  updates"): about once a day it asks GitHub's public API for the latest release of this
+  repository. The request carries only the app name and version (`Snowy/<version>`) as
+  User-Agent, plus the IP address any web request has. The local `update.json` keeps the last
+  check time and version numbers only.
+- **Match my weather** (off unless you pick it): an IP-based rough location lookup, then a
+  forecast query to [Open-Meteo](https://open-meteo.com/). The location is not stored; the
+  cached `weather.json` holds only the weather.
+
+Nothing else leaves your computer. The installer shows this notice before installing.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+Release binaries are built from this repository by the
+[release workflow](.github/workflows/release.yml) on GitHub Actions and signed through
+SignPath; every signing request is approved by hand.
+
+Team roles (this is a one-person project):
+
+- Committers and reviewers: [berkcantmr](https://github.com/berkcantmr)
+- Approvers: [berkcantmr](https://github.com/berkcantmr)
+
+Privacy: see [Privacy](#privacy) above.
 
 ## License
 
-Snowy is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Snowy is open source under the [MIT License](LICENSE).
 
-- ✅ Use it for personal, hobby, educational or other noncommercial purposes.
-- ✅ Change it and share it (including your changes) for free, keeping the license and the
-  `Required Notice` line.
-- ❌ No selling it and no commercial use of any kind (including bundling it in a paid product
-  or using it in a business).
-
-For commercial licensing, open an issue on this repository.
-
-Versions published before this change (up to commit `ed52214`, including the v0.1.0
-release assets) were released under the MIT License, and those copies stay under MIT.
+Releases v0.1.1 to v0.1.3 were published under the PolyForm Noncommercial License 1.0.0;
+those copies keep that license. Everything from v0.1.4 on, and v0.1.0, is MIT.

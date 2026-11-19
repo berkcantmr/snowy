@@ -46,6 +46,8 @@ pub struct Settings {
     pub original_wallpaper: Option<String>,
     /// Once a day, ask GitHub for the latest release (no other data is sent).
     pub check_updates: bool,
+    /// Version whose "What's new" the user has seen (empty = never recorded).
+    pub last_seen_version: String,
 }
 
 impl Default for Settings {
@@ -70,6 +72,7 @@ impl Default for Settings {
             wallpaper_time: "golden".to_string(),
             original_wallpaper: None,
             check_updates: true,
+            last_seen_version: String::new(),
         }
     }
 }

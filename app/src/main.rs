@@ -111,6 +111,7 @@ fn main() -> anyhow::Result<()> {
     init_logger();
     let settings = Settings::load();
     sync_autostart(settings.start_with_windows);
+    let settings = maybe_show_whats_new(settings);
     let lang = lang_of(&settings);
     log_startup(&settings);
     let tray = Tray::new(&TrayState { effect: settings.effect, paused: false, lang, update: None, notice: None, edit_mode: false })?;
@@ -1075,6 +1076,30 @@ fn close_children() {
         let _ = ch.wait();
     }
     children.clear();
+}
+
+/// After an update, opens the "What's new" window once. A fresh install (no earlier Snowy
+/// data) just records the version.
+fn maybe_show_whats_new(mut s: Settings) -> Settings {
+    let current = env!("CARGO_PKG_VERSION");
+    if s.last_seen_version == current {
+        return s;
+    }
+    let dir = Settings::dir();
+    let used_before = ["settings.json", "update.json", "weather.json"].iter().any(|f| dir.join(f).exists())
+        || std::fs::read_dir(&dir).is_ok_and(|mut d| d.any(|e| e.is_ok_and(|e| e.file_name().to_string_lossy().starts_with("props-"))));
+    let upgraded = s.last_seen_version.is_empty() || snowy_update::is_newer(current, &s.last_seen_version);
+    if used_before && upgraded {
+        if let Ok(exe) = std::env::current_exe() {
+            log::info!("showing what's new ({} -> {current})", s.last_seen_version);
+            spawn_child(std::process::Command::new(exe).arg("--whats-new"));
+        }
+    }
+    s.last_seen_version = current.to_string();
+    if let Err(e) = s.save() {
+        log::warn!("saving settings: {e}");
+    }
+    s
 }
 
 fn open_editor(monitor_id: &str, prop_id: u64) {
