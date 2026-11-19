@@ -105,26 +105,56 @@ impl Pile {
             let new = self.cap_for(i, offset).max(1e-3);
             let old = self.caps[i];
             if old > 1e-3 && self.cols[i] > 0.0 {
-                self.cols[i] = (self.cols[i] * new / old).min(new);
+                // Snow above the cap (after the maximum was lowered) melts on its own; only
+                // the part within the cap follows the drift.
+                let excess = (self.cols[i] - old).max(0.0);
+                self.cols[i] = (self.cols[i] - excess) * new / old + excess;
             }
             self.caps[i] = new;
         }
     }
 
-    /// Change the maximum height, keeping how full every column is.
+    /// Change the maximum height. The snow already there stays as it is: it grows towards a
+    /// higher maximum with the snowfall, and melts down to a lower one over a few seconds.
     fn set_max_h(&mut self, max_h: f32, offset: f32) {
         if (max_h - self.max_h).abs() < 1e-3 {
             return;
         }
-        let r = max_h / self.max_h.max(1e-3);
         self.max_h = max_h;
-        for c in &mut self.caps {
-            *c *= r;
+        for i in 0..self.cols.len() {
+            self.caps[i] = self.cap_for(i, offset).max(1e-3);
         }
-        for c in &mut self.cols {
-            *c *= r;
+    }
+
+    /// Melt snow standing above the cap by up to `amount` per column.
+    fn settle(&mut self, amount: f32) {
+        for (c, &cap) in self.cols.iter_mut().zip(&self.caps) {
+            if *c > cap {
+                *c = (*c - amount).max(cap);
+            }
         }
-        self.reshape(offset);
+    }
+
+    /// The ball with centre (cx, cy) and radius r rests here, sunk `sink` into the snow: snow
+    /// under it can't stand more than `sink` inside its outline, so the ball looks pressed a
+    /// little into the snow and nothing grows up through it.
+    pub fn press(&mut self, cx: f32, cy: f32, r: f32, sink: f32) {
+        if cx + r < self.x0 || cx - r > self.x1 {
+            return;
+        }
+        let (a, b) = (self.col(cx - r), self.col(cx + r));
+        for i in a..=b {
+            let x = self.x0 + (i as f32 + 0.5) * self.colw;
+            let dx = x - cx;
+            if dx.abs() >= r {
+                continue;
+            }
+            let bottom = cy + (r * r - dx * dx).sqrt() - sink;
+            let max_h = (self.y - bottom).max(0.0);
+            if self.cols[i] > max_h {
+                self.cols[i] = max_h;
+            }
+        }
     }
 
     pub fn height_at(&self, x: f32) -> f32 {
@@ -175,14 +205,16 @@ impl Pile {
         if n < 2 {
             return;
         }
-        let fill = |p: &Pile, i: usize| p.cols[i] / p.caps[i].max(1e-3);
+        // Snow above the cap (a lowered maximum, still melting) is kept aside, not smoothed.
+        let fill = |p: &Pile, i: usize| (p.cols[i] / p.caps[i].max(1e-3)).min(1.0);
         let mut prev = fill(self, 0);
         for i in 0..n {
             let cur = fill(self, i);
             let next = if i + 1 < n { fill(self, i + 1) } else { cur };
             let left = if i == 0 { cur } else { prev };
             let f = (cur + k * (left + next - 2.0 * cur)).clamp(0.0, 1.0);
-            self.cols[i] = f * self.caps[i];
+            let excess = (self.cols[i] - self.caps[i]).max(0.0);
+            self.cols[i] = f * self.caps[i] + excess;
             prev = cur;
         }
     }
@@ -290,6 +322,13 @@ impl Piles {
         })
     }
 
+    /// A ball resting on the pile with surface `id` at line `y`: see `Pile::press`.
+    pub fn press(&mut self, id: u64, y: f32, cx: f32, cy: f32, r: f32, sink: f32) {
+        if let Some(p) = self.piles.iter_mut().find(|p| p.id == id && (p.y - y).abs() <= 2.0) {
+            p.press(cx, cy, r, sink);
+        }
+    }
+
     /// Maximum ground snow height in pixels at 1080p (ledges get half), within DEPTH_RANGE.
     pub fn set_depth(&mut self, depth: f32) {
         let d = if depth.is_finite() { depth.clamp(DEPTH_RANGE.0, DEPTH_RANGE.1) } else { DEFAULT_DEPTH };
@@ -338,8 +377,11 @@ impl Piles {
             }
         }
         let k = (dt * 1.5).min(0.2);
+        // After the maximum is lowered, extra snow melts at ~8 px/s (1080p).
+        let melt = 8.0 * sc * dt;
         for p in &mut self.piles {
             p.diffuse(k);
+            p.settle(melt);
         }
         // Falling clumps.
         let mut i = 0;
@@ -559,18 +601,50 @@ mod tests {
     }
 
     #[test]
-    fn depth_setting_scales_the_snow() {
+    fn depth_setting_changes_the_limit_not_the_snow() {
         let mut ps = Piles::default();
+        let top = |ps: &Piles| ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
         full_ground(&mut ps, 0.0, 30.0);
-        let before = ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
+        let before = top(&ps);
+        // Raising the maximum leaves the snow as it is; it grows with the snowfall.
         ps.set_depth(DEFAULT_DEPTH * 2.0);
-        let after = ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
-        assert!((after - before * 2.0).abs() < 0.5, "{before} -> {after}");
+        assert_eq!(top(&ps), before);
         full_ground(&mut ps, 0.0, 30.0);
-        let more = ps.piles[0].cols.iter().cloned().fold(0.0, f32::max);
+        let more = top(&ps);
         assert!(more <= DEFAULT_DEPTH * 2.0 + 1e-3 && more > DEFAULT_DEPTH * 1.5, "{more}");
+        // Lowering it melts the extra snow over a few seconds, not at once.
+        ps.set_depth(DEFAULT_DEPTH * 0.5);
+        assert!((top(&ps) - more).abs() < 1e-3);
+        let mut rng = Rng::with_seed(3);
+        ps.update(0.016, 0.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+        let early = top(&ps);
+        assert!(early < more && early > more - 2.0, "{more} -> {early}");
+        for _ in 0..(8.0 / 0.016) as usize {
+            ps.update(0.016, 0.0, &[], Some(1000.0), 1920.0, 1080.0, &mut rng);
+        }
+        assert!(top(&ps) <= DEFAULT_DEPTH * 0.5 + 1e-3, "{}", top(&ps));
         ps.set_depth(1.0e9);
-        assert!(ps.piles[0].cols.iter().all(|&c| c <= DEPTH_RANGE.1 + 1e-3));
+        assert!(ps.piles[0].caps.iter().all(|&c| c <= DEPTH_RANGE.1 + 1e-3));
+    }
+
+    #[test]
+    fn a_resting_ball_presses_the_snow_under_it() {
+        let mut p = Pile::new(GROUND_ID, 0.0, 400.0, 500.0, 4.0, 28.0, 1.0);
+        p.cols.fill(20.0);
+        // Ball of radius 30 sunk 4 px into a 20 px layer: its centre is 26 px above the top.
+        let (cx, r, sink) = (200.0, 30.0, 4.0);
+        let cy = 500.0 - 20.0 - r + sink;
+        p.press(cx, cy, r, sink);
+        assert!((p.height_at(cx) - 20.0).abs() < 0.2, "{}", p.height_at(cx));
+        // Away from the ball the snow is untouched; at its sides it can still reach up.
+        assert_eq!(p.height_at(100.0), 20.0);
+        assert_eq!(p.height_at(cx + 28.0), 20.0);
+        // Snow can't grow up through the ball.
+        for _ in 0..200 {
+            p.add(cx, 3.0);
+            p.press(cx, cy, r, sink);
+        }
+        assert!(p.height_at(cx) <= 20.0 + 0.2, "{}", p.height_at(cx));
     }
 
     #[test]

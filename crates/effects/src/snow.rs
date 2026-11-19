@@ -147,8 +147,11 @@ impl Effect for Snow {
             f.vx += (wind * f.resp * sc - f.vx) * k;
             let sway = (t * f.freq + f.phase).sin() * f.amp * sc;
             f.x += (f.vx + sway) * dt * sp;
-            let y0 = f.y;
+            let mut y0 = f.y;
             f.y += f.fall * sc * sp * dt;
+            if !self.balls.balls.is_empty() && self.balls.deflect(&mut f.x, &mut f.y, &mut f.vx, sc) {
+                y0 = f.y;
+            }
             let landed = have_piles && self.piles.absorb(f.x, y0, f.y, per_flake * f.size);
             if landed || f.y > h + m {
                 f.y = -m - self.rng.f32() * m;

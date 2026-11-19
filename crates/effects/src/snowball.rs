@@ -13,6 +13,8 @@ const MAX_THROW: f32 = 3000.0;
 const STACK_WAIT: f32 = 1.5;
 /// A ball may sit on one at most this much smaller than itself.
 const STACK_RATIO: f32 = 1.05;
+/// How far a resting ball sinks into the snow, as a fraction of its radius.
+const SINK: f32 = 0.15;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BState {
@@ -125,6 +127,31 @@ impl Snowballs {
                 landed: false,
             });
         }
+    }
+
+    /// A falling flake at (x, y) that went into a ball is put back on its surface and nudged
+    /// sideways, so flakes slide over balls and drop beside them instead of passing through.
+    /// Returns true when the flake touched a ball.
+    pub fn deflect(&self, x: &mut f32, y: &mut f32, vx: &mut f32, sc: f32) -> bool {
+        for b in &self.balls {
+            let rr = b.r + 0.5 * sc;
+            let (dx, dy) = (*x - b.x, *y - b.y);
+            let d2 = dx * dx + dy * dy;
+            if d2 >= rr * rr {
+                continue;
+            }
+            let d = d2.sqrt();
+            // Straight on top: pick a side from the position so flakes split both ways.
+            let side = if dx.abs() > 0.05 * sc { dx.signum() } else if (*y * 7.31).fract() < 0.5 { -1.0 } else { 1.0 };
+            let (nx, ny) = if d > 1e-3 { (dx / d, dy / d) } else { (side, 0.0) };
+            *x = b.x + nx * rr;
+            *y = b.y + ny * rr;
+            // Slide down the slope: faster on the steep sides than on top.
+            let slide = (25.0 + 60.0 * nx.abs()) * sc;
+            *vx = side * vx.abs().max(slide);
+            return true;
+        }
+        false
     }
 
     fn find(&self, id: u32) -> Option<usize> {
@@ -315,6 +342,12 @@ impl Snowballs {
             }
         }
         self.stack_pass(dt, sc, rng);
+        // Resting balls press into the snow: nothing piles up inside them.
+        for b in &self.balls {
+            if let BState::Rest { id, y } = b.state {
+                piles.press(id, y, b.x, b.y, b.r, b.r * SINK);
+            }
+        }
         // Chunks.
         let mut i = 0;
         while i < self.chunks.len() {
@@ -451,7 +484,7 @@ fn step_ball(
                 if b.x < q.x0 || b.x > q.x1 {
                     b.state = BState::Free;
                 } else {
-                    b.y = q.top_at(b.x) - b.r;
+                    b.y = q.top_at(b.x) - b.r * (1.0 - SINK);
                     return true;
                 }
             }
@@ -535,5 +568,42 @@ mod tests {
         assert!(sb.balls[0].r > 12.0);
         let after: f32 = piles.piles[0].cols.iter().sum();
         assert!(after < before);
+    }
+
+    #[test]
+    fn flakes_slide_off_a_ball_and_land_beside_it() {
+        let mut sb = Snowballs::default();
+        let r = 30.0;
+        sb.balls.push(Ball {
+            id: 1,
+            x: 500.0,
+            y: 900.0,
+            vx: 0.0,
+            vy: 0.0,
+            r,
+            rot: 0.0,
+            state: BState::Rest { id: GROUND_ID, y: 1000.0 },
+            fixed: true,
+            rel: false,
+            timer: 0.0,
+        });
+        // Flakes falling straight onto the ball, across its whole width.
+        for k in 0..21 {
+            let (mut x, mut y, mut vx) = (500.0 - r + k as f32 * 3.0, 820.0, 0.0f32);
+            let mut touched = false;
+            for _ in 0..2000 {
+                x += vx * 0.016;
+                y += 60.0 * 0.016;
+                touched |= sb.deflect(&mut x, &mut y, &mut vx, 1.0);
+                let (dx, dy) = (x - 500.0, y - 900.0);
+                assert!(dx * dx + dy * dy >= (r - 0.01) * (r - 0.01), "flake {k} inside the ball at ({x}, {y})");
+                if y > 940.0 {
+                    break;
+                }
+            }
+            assert!(touched, "flake {k} missed");
+            assert!(y > 940.0, "flake {k} stuck on the ball at ({x}, {y})");
+            assert!((x - 500.0).abs() >= r - 1.0, "flake {k} came down under the ball: {x}");
+        }
     }
 }
