@@ -38,6 +38,8 @@ struct App {
     friends: Option<snowy_net::Hub>,
     /// Revision of the friends state last written to friends.json.
     friends_rev: u64,
+    /// When each friend last did each kind of action here (receiver-side rate limit).
+    friend_actions: std::collections::HashMap<(String, snowy_net::state::ActionKind), Instant>,
     /// A usage ping is being sent right now.
     usage_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     settings_mtime: Option<SystemTime>,
@@ -131,6 +133,7 @@ fn main() -> anyhow::Result<()> {
         settings: settings.clone(),
         friends: None,
         friends_rev: 0,
+        friend_actions: std::collections::HashMap::new(),
         usage_busy: Default::default(),
         screens: Vec::new(),
         active: None,
@@ -654,12 +657,57 @@ impl App {
             for c in commands {
                 hub.send(c);
             }
+            let incoming = hub.take_incoming();
             let st = hub.state();
+            if !incoming.is_empty() {
+                self.friend_actions_arrived(&dir, incoming);
+            }
             if st.rev != self.friends_rev {
                 self.friends_rev = st.rev;
                 if let Err(e) = snowy_net::state::save_state(&dir, &st) {
                     log::warn!("friends: writing state: {e}");
                 }
+            }
+        }
+    }
+
+    /// Shows what friends did, if this person allows it from them and they aren't overdoing it.
+    fn friend_actions_arrived(&mut self, dir: &std::path::Path, incoming: Vec<(String, snowy_net::state::Action)>) {
+        use snowy_net::state::Action;
+        let perms = snowy_net::state::load_perms(dir);
+        let names = snowy_net::state::load_names(dir);
+        let lang = lang_of(&self.settings);
+        for (from, action) in incoming {
+            let kind = action.kind();
+            if !perms.get(&from).copied().unwrap_or_default().allows(kind) {
+                continue;
+            }
+            let key = (from.clone(), kind);
+            if self.friend_actions.get(&key).is_some_and(|t| t.elapsed() < kind.min_gap()) {
+                log::info!("friends: {from} is sending too fast; dropped");
+                continue;
+            }
+            self.friend_actions.insert(key, Instant::now());
+            let name = names.get(&from).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| from.clone());
+            let text_key = match action {
+                Action::Snowball { x } => {
+                    if self.is_running() {
+                        if let Some(e) = self.primary_screen().and_then(|s| s.effect.as_mut()) {
+                            e.incoming_snowball(x);
+                        }
+                    }
+                    "toast.friend_snowball"
+                }
+                Action::Gift => {
+                    if let Some(s) = self.primary_screen() {
+                        s.props.drop_gift();
+                    }
+                    "toast.friend_gift"
+                }
+            };
+            let text = i18n::t(&lang, text_key).replace("{name}", &name);
+            if let Some(t) = &mut self.toast {
+                t.show(snowy_sys::ToastIcon::Friend, &text, &[], None);
             }
         }
     }

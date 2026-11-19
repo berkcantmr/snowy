@@ -6,6 +6,7 @@
 //!   app version is sent to the server, which only adds it to that day's totals.
 
 pub mod client;
+pub mod e2e;
 pub mod identity;
 pub mod state;
 pub mod usage;

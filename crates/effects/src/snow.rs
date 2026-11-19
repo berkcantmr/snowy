@@ -164,6 +164,12 @@ impl Effect for Snow {
         self.build();
     }
 
+    fn incoming_snowball(&mut self, x: f32) -> bool {
+        let sc = ui_scale(self.w, self.h);
+        self.balls.incoming(x * self.w, sc, &mut self.rng);
+        true
+    }
+
     fn grabs_at(&self, pos: [f32; 2]) -> bool {
         self.snowballs_on && self.balls.balls.iter().any(|b| (b.x - pos[0]).hypot(b.y - pos[1]) <= b.r)
     }

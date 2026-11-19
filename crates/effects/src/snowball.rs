@@ -154,6 +154,35 @@ impl Snowballs {
         false
     }
 
+    /// A snowball thrown by a friend: falls in from above the top edge at `x`, slightly
+    /// sideways, and lands, rolls or bursts like any other.
+    pub fn incoming(&mut self, x: f32, sc: f32, rng: &mut Rng) {
+        if self.balls.len() >= MAX_BALLS {
+            let idx = self.balls.iter().position(|b| matches!(b.state, BState::Rest { .. })).or_else(|| self.balls.iter().position(|b| b.state == BState::Free));
+            match idx {
+                Some(i) => {
+                    self.balls.remove(i);
+                }
+                None => return,
+            }
+        }
+        let r = range(rng, 10.0, 16.0) * sc;
+        self.next_id = self.next_id.wrapping_add(1);
+        self.balls.push(Ball {
+            id: self.next_id,
+            x,
+            y: -r * 2.0,
+            vx: range(rng, -120.0, 120.0) * sc,
+            vy: range(rng, 150.0, 300.0) * sc,
+            r,
+            rot: 0.0,
+            state: BState::Free,
+            fixed: true,
+            rel: false,
+            timer: 0.0,
+        });
+    }
+
     fn find(&self, id: u32) -> Option<usize> {
         self.balls.iter().position(|b| b.id == id)
     }

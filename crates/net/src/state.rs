@@ -46,13 +46,95 @@ pub struct FriendsState {
     pub rev: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Command {
     Add { code: String },
     Accept { code: String },
     Decline { code: String },
     Remove { code: String },
+    /// Do something on a friend's desktop (sent end-to-end encrypted).
+    Send { to: String, action: Action },
+}
+
+/// Something one friend does on the other's desktop. Only these fixed shapes exist: no text,
+/// files or links can be sent.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Action {
+    /// A snowball flies in from the top; `x` is where, 0..1 across the screen.
+    Snowball { x: f32 },
+    /// A gift box floats down on a parachute.
+    Gift,
+}
+
+impl Action {
+    pub fn kind(&self) -> ActionKind {
+        match self {
+            Action::Snowball { .. } => ActionKind::Snowball,
+            Action::Gift => ActionKind::Gift,
+        }
+    }
+
+    /// Clamps values from the wire into range.
+    pub fn sanitized(self) -> Action {
+        match self {
+            Action::Snowball { x } => Action::Snowball { x: if x.is_finite() { x.clamp(0.02, 0.98) } else { 0.5 } },
+            Action::Gift => Action::Gift,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActionKind {
+    Snowball,
+    Gift,
+}
+
+impl ActionKind {
+    /// Least time between two of these from (or to) the same friend.
+    pub fn min_gap(self) -> std::time::Duration {
+        match self {
+            ActionKind::Snowball => std::time::Duration::from_millis(1500),
+            ActionKind::Gift => std::time::Duration::from_secs(10 * 60),
+        }
+    }
+}
+
+/// What one friend may do on this desktop. Everything is allowed until turned off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Perms {
+    pub snowballs: bool,
+    pub gifts: bool,
+}
+
+impl Default for Perms {
+    fn default() -> Self {
+        Perms { snowballs: true, gifts: true }
+    }
+}
+
+impl Perms {
+    pub fn allows(&self, kind: ActionKind) -> bool {
+        match kind {
+            ActionKind::Snowball => self.snowballs,
+            ActionKind::Gift => self.gifts,
+        }
+    }
+}
+
+pub fn perms_path(dir: &Path) -> PathBuf {
+    dir.join("friend-perms.json")
+}
+
+/// Permissions by friend code (missing = default).
+pub fn load_perms(dir: &Path) -> BTreeMap<String, Perms> {
+    std::fs::read(perms_path(dir)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+pub fn save_perms(dir: &Path, perms: &BTreeMap<String, Perms>) -> std::io::Result<()> {
+    write_json(&perms_path(dir), perms)
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {

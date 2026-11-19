@@ -166,6 +166,12 @@ pub trait Effect {
         let _ = pos;
         false
     }
+    /// A friend threw a snowball: it flies in from the top at `x` (0..1 across). Returns false
+    /// when this effect has no snowballs (the caller then only shows a notice).
+    fn incoming_snowball(&mut self, x: f32) -> bool {
+        let _ = x;
+        false
+    }
     /// Maximum height of ground snow in pixels at 1080p (ledges get half). Default: ignored.
     fn set_pile_depth(&mut self, depth: f32) {
         let _ = depth;

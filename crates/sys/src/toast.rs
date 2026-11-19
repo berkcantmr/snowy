@@ -33,6 +33,8 @@ pub enum ToastIcon {
     Lock,
     EditOn,
     EditOff,
+    /// Something a friend did.
+    Friend,
 }
 
 // ---- timing -------------------------------------------------------------------------------
@@ -307,6 +309,7 @@ fn icon_glyph(icon: ToastIcon) -> &'static str {
         ToastIcon::Lock => "\u{E72E}",
         ToastIcon::EditOn => "\u{E70F}",
         ToastIcon::EditOff => "\u{E73E}",
+        ToastIcon::Friend => "\u{E716}",
     }
 }
 

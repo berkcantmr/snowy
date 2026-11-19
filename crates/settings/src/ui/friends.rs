@@ -4,7 +4,7 @@
 use eframe::egui::{self, vec2, Align, Color32, Key, Layout, RichText, Sense};
 use snowy_core::config::Settings;
 use snowy_core::i18n;
-use snowy_net::state::{self as net, Command, FriendsState, Status};
+use snowy_net::state::{self as net, Action, Command, FriendsState, Perms, Status};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
@@ -22,6 +22,8 @@ pub struct FriendsUi {
     dir: PathBuf,
     state: FriendsState,
     names: BTreeMap<String, String>,
+    /// What each friend may do here (friend-perms.json).
+    perms: BTreeMap<String, Perms>,
     mtime: Option<SystemTime>,
     polled: Option<Instant>,
     add_text: String,
@@ -39,6 +41,7 @@ impl Default for FriendsUi {
         Self {
             state: net::load_state(&dir),
             names: net::load_names(&dir),
+            perms: net::load_perms(&dir),
             mtime: None,
             polled: None,
             dir,
@@ -71,6 +74,17 @@ impl FriendsUi {
         }
     }
 
+    fn set_perms(&mut self, code: &str, p: Perms) {
+        if p == Perms::default() {
+            self.perms.remove(code);
+        } else {
+            self.perms.insert(code.to_string(), p);
+        }
+        if let Err(e) = net::save_perms(&self.dir, &self.perms) {
+            eprintln!("snowy-settings: could not save friend permissions: {e}");
+        }
+    }
+
     fn set_name(&mut self, code: &str, name: &str) {
         let name = name.trim();
         if name.is_empty() {
@@ -88,7 +102,7 @@ impl FriendsUi {
 fn error_key(id: &str) -> String {
     match id {
         "unknown_code" | "own_code" | "not_friends" | "offline" | "too_many" | "too_large" | "bad_message" | "not_logged_in"
-        | "bad_signature" => format!("friends.err.{id}"),
+        | "bad_signature" | "slow_down" => format!("friends.err.{id}"),
         _ => "friends.err.other".to_string(),
     }
 }
@@ -312,6 +326,34 @@ impl SettingsApp {
                         });
                     }
                 });
+                if !editing {
+                    // Things to do on their desktop (while they're online) ...
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.add_enabled_ui(friend.online, |ui| {
+                            let throw = egui::Button::new(i18n::t(lang, "friends.throw")).min_size(vec2(0.0, 26.0));
+                            if ui.add(throw).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
+                                let x = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.subsec_millis() as f32 / 1000.0).unwrap_or(0.5);
+                                f.send(Command::Send { to: code.clone(), action: Action::Snowball { x: 0.1 + 0.8 * x } });
+                            }
+                            let gift = egui::Button::new(i18n::t(lang, "friends.gift")).min_size(vec2(0.0, 26.0));
+                            if ui.add(gift).on_disabled_hover_text(i18n::t(lang, "friends.needs_online")).clicked() {
+                                f.send(Command::Send { to: code.clone(), action: Action::Gift });
+                            }
+                        });
+                    });
+                    // ... and what they may do on this one.
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        let mut p = f.perms.get(&code).copied().unwrap_or_default();
+                        let before = p;
+                        ui.checkbox(&mut p.snowballs, RichText::new(i18n::t(lang, "friends.allow_snowballs")).small());
+                        ui.checkbox(&mut p.gifts, RichText::new(i18n::t(lang, "friends.allow_gifts")).small());
+                        if p != before {
+                            f.set_perms(&code, p);
+                        }
+                    });
+                }
             }
         });
         dirty

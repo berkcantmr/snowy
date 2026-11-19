@@ -367,6 +367,18 @@ impl Layer {
         self.rebuild();
     }
 
+    /// A friend sent a gift: one floats down now (primary screen only; at most one at a time).
+    /// Returns false when it can't be shown here.
+    pub fn drop_gift(&mut self) -> bool {
+        if !self.primary || self.gift.is_some() {
+            return false;
+        }
+        let sc = self.sc();
+        let x = self.free_spot(SNOWMAN_H * 0.6) * self.width;
+        self.gift = Some(Gift { x, y: -1.3 * GIFT_H * sc, stage: GStage::Falling, t: 0.0, seed: fastrand::f32() * TAU });
+        true
+    }
+
     /// True when a press at `pos` would act on a decoration: drag or open an unlocked prop,
     /// scare the yeti or open the gift.
     pub fn hits(&self, pos: [f32; 2]) -> bool {
