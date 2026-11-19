@@ -122,6 +122,7 @@ pub fn run_editor_demo(monitor_id: String, prop_id: u64, auto_close: Option<std:
     let size = if found { [520.0, 720.0] } else { [380.0, 170.0] };
     let place = win::fit_window(size, if found { [480.0, 560.0] } else { size }, win::primary_work_area_logical());
     win::start_window_guard(place.min);
+    win::bring_to_front_once(&title);
     let mut viewport = eframe::egui::ViewportBuilder::default();
     if let Some(p) = place.pos {
         viewport = viewport.with_position(p);
@@ -131,7 +132,10 @@ pub fn run_editor_demo(monitor_id: String, prop_id: u64, auto_close: Option<std:
             .with_inner_size(place.size)
             .with_min_inner_size(place.min)
             .with_maximize_button(false)
-            .with_title(title.clone()),
+            .with_title(title.clone())
+            // Opened by clicking a decoration on the desktop: stay in front until closed.
+            .with_always_on_top()
+            .with_active(true),
         centered: place.pos.is_none(),
         ..Default::default()
     };

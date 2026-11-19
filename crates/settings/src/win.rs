@@ -210,6 +210,9 @@ struct Guard {
     last_check: std::time::Instant,
     /// Minimum inner size (DIPs) restored if the window gets squashed.
     min: [f32; 2],
+    /// Title of this window, to bring it to the front once it exists (see `bring_to_front_once`).
+    front: Option<String>,
+    started: std::time::Instant,
 }
 
 thread_local! {
@@ -218,8 +221,44 @@ thread_local! {
 
 /// Starts watching for `tick_window_guard`; call before running the window.
 pub fn start_window_guard(min: [f32; 2]) {
-    let g = Guard { had_main: main_instance_running(), last_check: std::time::Instant::now(), min };
+    let now = std::time::Instant::now();
+    let g = Guard { had_main: main_instance_running(), last_check: now, min, front: None, started: now };
     GUARD.with(|c| *c.borrow_mut() = Some(g));
+}
+
+/// After `start_window_guard`: once the window titled `title` appears, bring it in front of the
+/// window the user was in and give it the keyboard focus. A process started from a click on the
+/// desktop isn't allowed to take the foreground by itself, so it borrows the input of the
+/// current foreground window for that one call.
+pub fn bring_to_front_once(title: &str) {
+    GUARD.with(|c| {
+        if let Some(g) = c.borrow_mut().as_mut() {
+            g.front = Some(title.to_string());
+        }
+    });
+}
+
+/// Returns true once the window was found (and raised).
+fn force_foreground(title: &str) -> bool {
+    use windows::core::HSTRING;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId};
+    unsafe {
+        let Ok(hwnd) = FindWindowW(PCWSTR::null(), &HSTRING::from(title)) else { return false };
+        let fg = GetForegroundWindow();
+        if fg == hwnd {
+            return true;
+        }
+        let me = GetCurrentThreadId();
+        let other = GetWindowThreadProcessId(fg, None);
+        let attached = other != 0 && other != me && AttachThreadInput(me, other, true).as_bool();
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        if attached {
+            let _ = AttachThreadInput(me, other, false);
+        }
+        true
+    }
 }
 
 /// Call every frame. About once a second:
@@ -232,6 +271,14 @@ pub fn tick_window_guard(ctx: &eframe::egui::Context) {
     GUARD.with(|c| {
         let mut c = c.borrow_mut();
         let Some(g) = c.as_mut() else { return };
+        if let Some(title) = g.front.as_deref() {
+            // Try every frame for the first few seconds, until the window exists.
+            if force_foreground(title) || g.started.elapsed() > std::time::Duration::from_secs(3) {
+                g.front = None;
+            } else {
+                ctx.request_repaint();
+            }
+        }
         if g.last_check.elapsed() < std::time::Duration::from_secs(1) {
             return;
         }
