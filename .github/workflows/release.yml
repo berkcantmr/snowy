@@ -1,0 +1,136 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Read version and check it against the tag
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if (-not $v) { throw 'could not read the version from Cargo.toml' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $tagVer = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($tagVer -ne $v) { throw "tag $($env:GITHUB_REF_NAME) does not match Cargo.toml version $v" }
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: cargo test --workspace --release -- --skip second_instance_refused
+
+      - name: Build
+        run: cargo build -p snowy --release
+
+      # ---- sign snowy.exe (SignPath; skipped when SIGNPATH_API_TOKEN is not set) ----
+      - name: Upload unsigned exe
+        id: upload-exe
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snowy-exe-unsigned
+          path: target/release/snowy.exe
+          if-no-files-found: error
+
+      - name: Sign snowy.exe
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: snowy
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.upload-exe.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/exe
+
+      - name: Use signed exe
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: Copy-Item signed/exe/snowy.exe target/release/snowy.exe -Force
+
+      # ---- installer + portable zip ----
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $c = @("$env:ProgramFiles\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ }
+          if (-not $c) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
+          }
+
+      - name: Build installer and portable zip
+        shell: pwsh
+        run: ./installer/build.ps1 -SkipCargo -RequireInstaller
+
+      # ---- sign the installer ----
+      - name: Upload unsigned installer
+        id: upload-setup
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snowy-setup-unsigned
+          path: dist/Snowy-${{ steps.ver.outputs.version }}-setup.exe
+          if-no-files-found: error
+
+      - name: Sign installer
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: snowy
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed/setup
+
+      - name: Use signed installer
+        if: env.SIGNPATH_API_TOKEN != ''
+        shell: pwsh
+        run: Copy-Item "signed/setup/Snowy-${{ steps.ver.outputs.version }}-setup.exe" "dist/Snowy-${{ steps.ver.outputs.version }}-setup.exe" -Force
+
+      # ---- checksum + draft release ----
+      - name: Write SHA-256 file
+        shell: pwsh
+        run: |
+          $setupName = "Snowy-${{ steps.ver.outputs.version }}-setup.exe"
+          $setup = Join-Path $PWD "dist/$setupName"
+          # "<lowercase hex>  <file name>", same format as installer/release.ps1
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $setup).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$setup.sha256", "$hash  $setupName`n", (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "SHA-256: $hash"
+
+      - name: Create draft release
+        shell: pwsh
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          $notes = "docs/release-notes/$v.md"
+          $ghArgs = @(
+            "v$v",
+            "dist/Snowy-$v-setup.exe", "dist/Snowy-$v-setup.exe.sha256", "dist/Snowy-$v-portable.zip",
+            '--repo', $env:GITHUB_REPOSITORY, '--title', "Snowy $v", '--draft'
+          )
+          if ($env:GITHUB_REF_TYPE -ne 'tag') { $ghArgs += @('--target', $env:GITHUB_SHA) }
+          if (Test-Path $notes) { $ghArgs += @('--notes-file', $notes) } else { $ghArgs += '--generate-notes' }
+          gh release create @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }

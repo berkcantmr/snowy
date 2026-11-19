@@ -1,10 +1,20 @@
 # Builds the release exe, then the Inno Setup installer (if ISCC is found) and a portable zip.
+#   -SkipCargo        reuse the existing targetelease\snowy.exe (CI signs it before packaging)
+#   -RequireInstaller fail instead of warning when Inno Setup 6 is missing
+param(
+  [switch]$SkipCargo,
+  [switch]$RequireInstaller
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-cargo build -p snowy --release
-if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+if (-not $SkipCargo) {
+  cargo build -p snowy --release
+  if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+} elseif (-not (Test-Path 'targetelease\snowy.exe')) {
+  throw "-SkipCargo given but targetelease\snowy.exe does not exist"
+}
 
 $version = (Select-String -Path 'Cargo.toml' -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
 $dist = Join-Path $root 'dist'
@@ -19,6 +29,8 @@ $iscc = @(
 if ($iscc) {
   & $iscc "/DMyAppVersion=$version" (Join-Path $root 'installer\snowy.iss')
   if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+} elseif ($RequireInstaller) {
+  throw "Inno Setup 6 not found (ISCC.exe)"
 } else {
   Write-Warning "Inno Setup 6 not found; skipping installer. Install it with: winget install JRSoftware.InnoSetup"
 }
