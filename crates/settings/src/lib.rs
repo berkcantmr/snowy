@@ -52,13 +52,19 @@ fn run_inner(
     let lang = state::effective_lang(&settings.language, win::windows_locale().as_deref());
     let title = snowy_core::i18n::t(lang, "settings.title");
 
+    let place = win::fit_window([560.0, 640.0], [480.0, 520.0], win::primary_work_area_logical());
+    win::start_window_guard(place.min);
+    let mut viewport = eframe::egui::ViewportBuilder::default();
+    if let Some(p) = place.pos {
+        viewport = viewport.with_position(p);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 640.0])
-            .with_min_inner_size([480.0, 520.0])
+        viewport: viewport
+            .with_inner_size(place.size)
+            .with_min_inner_size(place.min)
             .with_maximize_button(false)
             .with_title(title),
-        centered: true,
+        centered: place.pos.is_none(),
         ..Default::default()
     };
     eframe::run_native(
@@ -112,13 +118,19 @@ pub fn run_editor_demo(monitor_id: String, prop_id: u64, auto_close: Option<std:
 
     let found = prop.is_some();
     let size = if found { [520.0, 720.0] } else { [380.0, 170.0] };
+    let place = win::fit_window(size, if found { [480.0, 560.0] } else { size }, win::primary_work_area_logical());
+    win::start_window_guard(place.min);
+    let mut viewport = eframe::egui::ViewportBuilder::default();
+    if let Some(p) = place.pos {
+        viewport = viewport.with_position(p);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size(size)
-            .with_min_inner_size(if found { [480.0, 560.0] } else { size })
+        viewport: viewport
+            .with_inner_size(place.size)
+            .with_min_inner_size(place.min)
             .with_maximize_button(false)
             .with_title(title.clone()),
-        centered: true,
+        centered: place.pos.is_none(),
         ..Default::default()
     };
     eframe::run_native(

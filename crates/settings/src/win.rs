@@ -106,3 +106,145 @@ pub fn acquire_editor_instance(prop_id: u64, titles: &[String]) -> Option<Instan
         Some(InstanceGuard(h))
     }
 }
+
+/// Work area (screen minus taskbar) of the primary monitor in logical pixels (DIPs):
+/// (left, top, width, height). New windows open on that monitor. None if unreadable.
+pub fn primary_work_area_logical() -> Option<[f32; 4]> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+    unsafe {
+        let hmon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(hmon, &mut mi).as_bool() {
+            return None;
+        }
+        let (mut dx, mut dy) = (96u32, 96u32);
+        GetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy).ok()?;
+        let scale = dx.max(96) as f32 / 96.0;
+        let r = mi.rcWork;
+        Some([
+            r.left as f32 / scale,
+            r.top as f32 / scale,
+            (r.right - r.left) as f32 / scale,
+            (r.bottom - r.top) as f32 / scale,
+        ])
+    }
+}
+
+/// Height of the window title bar plus frame, in DIPs (Windows 10/11 default theme).
+const FRAME_H: f32 = 32.0;
+
+/// Where and how big a window opens.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    pub size: [f32; 2],
+    pub min: [f32; 2],
+    /// Outer top-left in DIPs, centred in the work area. None = let the system place it.
+    pub pos: Option<[f32; 2]>,
+}
+
+/// Shrinks a window's `desired` (and `min`) inner size so the whole window, title bar
+/// included, fits the work area `work` (DIPs: left, top, width, height), and centres it
+/// there rather than on the whole monitor, so it never slides under the taskbar. Content
+/// scrolls when the window is shorter than desired.
+pub fn fit_window(desired: [f32; 2], min: [f32; 2], work: Option<[f32; 4]>) -> Placement {
+    let Some([x, y, w, h]) = work else { return Placement { size: desired, min, pos: None } };
+    let (max_w, max_h) = ((w - 16.0).max(320.0), (h - FRAME_H - 16.0).max(300.0));
+    let size = [desired[0].min(max_w), desired[1].min(max_h)];
+    let pos = [x + ((w - size[0]) / 2.0).max(0.0), y + ((h - size[1] - FRAME_H) / 2.0).max(0.0)];
+    Placement { size, min: [min[0].min(size[0]), min[1].min(size[1])], pos: Some(pos) }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::{fit_window, FRAME_H};
+
+    #[test]
+    fn fits_common_laptop_scales() {
+        // 1920x1080, taskbar 48 px at 100 % (it grows with the scale).
+        for (scale, fits_unchanged) in [(1.0, true), (1.25, true), (1.5, false), (1.75, false)] {
+            let wh = (1080.0 - 48.0 * scale) / scale;
+            let work = [0.0, 0.0, 1920.0 / scale, wh];
+            let p = fit_window([520.0, 720.0], [480.0, 560.0], Some(work));
+            let pos = p.pos.unwrap();
+            assert!(pos[1] >= 0.0 && pos[1] + FRAME_H + p.size[1] <= wh + 0.01, "{scale}: {p:?}");
+            assert!(pos[0] >= 0.0 && pos[0] + p.size[0] <= work[2] + 0.01);
+            assert!(p.min[0] <= p.size[0] && p.min[1] <= p.size[1]);
+            assert_eq!(p.size == [520.0, 720.0], fits_unchanged, "{scale}");
+        }
+    }
+
+    #[test]
+    fn work_area_offset_is_respected() {
+        // Taskbar at the top: work area starts lower.
+        let p = fit_window([400.0, 300.0], [400.0, 300.0], Some([0.0, 40.0, 1000.0, 700.0]));
+        assert_eq!(p.pos, Some([300.0, 40.0 + (700.0 - 300.0 - FRAME_H) / 2.0]));
+    }
+
+    #[test]
+    fn unknown_work_area_keeps_size() {
+        let p = fit_window([560.0, 640.0], [480.0, 520.0], None);
+        assert_eq!((p.size, p.min, p.pos), ([560.0, 640.0], [480.0, 520.0], None));
+    }
+}
+
+/// True while the tray app (the main Snowy process) is running.
+pub fn main_instance_running() -> bool {
+    use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
+    // Same name as snowy_sys::single_instance.
+    match unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, w!(r"Local\SnowyMainInstance")) } {
+        Ok(h) => {
+            unsafe {
+                let _ = CloseHandle(h);
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+struct Guard {
+    /// The tray app was running when this window opened.
+    had_main: bool,
+    last_check: std::time::Instant,
+    /// Minimum inner size (DIPs) restored if the window gets squashed.
+    min: [f32; 2],
+}
+
+thread_local! {
+    static GUARD: std::cell::RefCell<Option<Guard>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts watching for `tick_window_guard`; call before running the window.
+pub fn start_window_guard(min: [f32; 2]) {
+    let g = Guard { had_main: main_instance_running(), last_check: std::time::Instant::now(), min };
+    GUARD.with(|c| *c.borrow_mut() = Some(g));
+}
+
+/// Call every frame. About once a second:
+/// - closes this window when the tray app it belongs to has quit (so windows opened by a
+///   second launch don't outlive the app);
+/// - restores a usable size if a display-scale change squashed the window.
+pub fn tick_window_guard(ctx: &eframe::egui::Context) {
+    use eframe::egui::{vec2, ViewportCommand};
+    ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    GUARD.with(|c| {
+        let mut c = c.borrow_mut();
+        let Some(g) = c.as_mut() else { return };
+        if g.last_check.elapsed() < std::time::Duration::from_secs(1) {
+            return;
+        }
+        g.last_check = std::time::Instant::now();
+        if g.had_main && !main_instance_running() {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+            return;
+        }
+        let inner = ctx.input(|i| i.viewport().inner_rect);
+        if let Some(r) = inner {
+            if r.width() < g.min[0] * 0.6 || r.height() < g.min[1] * 0.6 {
+                ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(g.min[0], g.min[1])));
+            }
+        }
+    });
+}

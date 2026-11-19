@@ -179,6 +179,7 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        crate::win::tick_window_guard(ui.ctx());
         let ctx = ui.ctx().clone();
 
         if self.font_lang != self.lang {
