@@ -4,6 +4,7 @@
 pub mod config;
 pub mod i18n;
 pub mod props;
+pub mod shutdown;
 
 /// Something an effect did that the rest of the app should know about.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -158,6 +159,12 @@ pub trait Effect {
     /// snow piles and around snowballs. Appended to `out`; default: none.
     fn grab_zones(&self, out: &mut Vec<[f32; 4]>) {
         let _ = out;
+    }
+    /// True when a press at `pos` (overlay-local) would pick up something of this effect that
+    /// sits there, e.g. a snowball. It then wins over a decoration behind it. Default: false.
+    fn grabs_at(&self, pos: [f32; 2]) -> bool {
+        let _ = pos;
+        false
     }
     /// Maximum height of ground snow in pixels at 1080p (ledges get half). Default: ignored.
     fn set_pile_depth(&mut self, depth: f32) {

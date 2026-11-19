@@ -164,6 +164,10 @@ impl Effect for Snow {
         self.build();
     }
 
+    fn grabs_at(&self, pos: [f32; 2]) -> bool {
+        self.snowballs_on && self.balls.balls.iter().any(|b| (b.x - pos[0]).hypot(b.y - pos[1]) <= b.r)
+    }
+
     fn set_pile_depth(&mut self, depth: f32) {
         self.piles.set_depth(depth);
     }

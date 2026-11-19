@@ -367,6 +367,15 @@ impl Layer {
         self.rebuild();
     }
 
+    /// True when a press at `pos` would act on a decoration: drag or open an unlocked prop,
+    /// scare the yeti or open the gift.
+    pub fn hits(&self, pos: [f32; 2]) -> bool {
+        let inside = |z: Option<[f32; 4]>| z.is_some_and(|z| pos[0] >= z[0] && pos[0] <= z[2] && pos[1] >= z[1] && pos[1] <= z[3]);
+        inside(self.yeti_zone)
+            || inside(self.gift_zone)
+            || self.hit_part(pos).is_some_and(|(i, _)| !self.locked.get(i).copied().unwrap_or(false))
+    }
+
     /// True when there is nothing to draw (lets the app skip rendering this overlay).
     pub fn is_empty(&self) -> bool {
         self.file.props.is_empty()

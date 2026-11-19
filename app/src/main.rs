@@ -166,6 +166,12 @@ fn main() -> anyhow::Result<()> {
         if !snowy_sys::pump_messages() {
             break;
         }
+        if snowy_core::shutdown::requested() {
+            // Windows or an installer (Restart Manager) asked Snowy to close.
+            log::info!("close requested by the system, quitting");
+            close_children();
+            return Ok(());
+        }
         while let Some(cmd) = app.tray.poll() {
             if !app.handle(cmd) {
                 return Ok(());
@@ -242,7 +248,9 @@ fn main() -> anyhow::Result<()> {
         if let (Some(r), Some(g)) = (raw.as_mut(), app.grab.as_ref()) {
             r.down |= g.captured();
         }
+        let was_down = app.pointer.raw.is_some_and(|r| r.down);
         app.pointer.update(raw, dt);
+        app.decide_pointer_owner(was_down);
         let wind = app.wind.update(dt, app.settings.changing_wind);
         let env = Env { wind, intensity: app.settings.intensity, speed: app.settings.speed, time };
         let piling = !app.settings.keep_windows_clear;
@@ -253,7 +261,7 @@ fn main() -> anyhow::Result<()> {
                     let scene = Scene {
                         surfaces: &s.surfaces,
                         ground: piling.then_some(ground_y(&s.monitor)),
-                        pointer: app.pointer.local(&s.monitor),
+                        pointer: app.pointer.local_for(&s.monitor, Owner::Weather),
                         snowballs,
                     };
                     let t0 = Instant::now();
@@ -600,6 +608,32 @@ impl App {
 
     /// Simulate and draw the props layer of every screen; route events and actions between
     /// the weather effect and the props.
+    /// On a new press: a snowball under the cursor wins, then a decoration, then the weather
+    /// (starting a snowball on the snow). Released: nobody.
+    fn decide_pointer_owner(&mut self, was_down: bool) {
+        let down = self.pointer.raw.is_some_and(|r| r.down);
+        if !down {
+            self.pointer.owner = Owner::Nobody;
+            return;
+        }
+        if was_down {
+            return;
+        }
+        let mut owner = Owner::Weather;
+        for s in &self.screens {
+            let Some(p) = self.pointer.local(&s.monitor).filter(|p| p.over_desktop) else { continue };
+            owner = if s.effect.as_ref().is_some_and(|e| e.grabs_at(p.pos)) {
+                Owner::Weather
+            } else if s.props.hits(p.pos) {
+                Owner::Props
+            } else {
+                Owner::Weather
+            };
+            break;
+        }
+        self.pointer.owner = owner;
+    }
+
     fn update_props(&mut self, dt: f32, env: &Env, running: bool) {
         let mut events: Vec<WorldEvent> = Vec::new();
         let mut actions: Vec<Action> = Vec::new();
@@ -617,7 +651,7 @@ impl App {
                 let scene = Scene {
                     surfaces: &[],
                     ground: Some(ground_y(&s.monitor)),
-                    pointer: self.pointer.local(&s.monitor),
+                    pointer: self.pointer.local_for(&s.monitor, Owner::Props),
                     snowballs: false,
                 };
                 s.props.update(dt, env, &scene);
@@ -860,11 +894,22 @@ impl Profiler {
     }
 }
 
+/// Who a press belongs to, decided when the button goes down and kept until it is released,
+/// so dragging a snowball in front of a tree doesn't drag the tree too (and the other way round).
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+enum Owner {
+    #[default]
+    Nobody,
+    Weather,
+    Props,
+}
+
 /// Cursor position (virtual screen) with smoothed velocity.
 #[derive(Default)]
 struct PointerTracker {
     raw: Option<snowy_sys::RawPointer>,
     vel: [f32; 2],
+    owner: Owner,
 }
 
 impl PointerTracker {
@@ -882,6 +927,15 @@ impl PointerTracker {
     }
 
     /// Pointer in `m`'s overlay-local coordinates, if the cursor is on that monitor.
+    /// The pointer as `who` sees it: the button counts as up while someone else owns the press.
+    fn local_for(&self, m: &MonitorInfo, who: Owner) -> Option<Pointer> {
+        let mut p = self.local(m)?;
+        if self.owner != Owner::Nobody && self.owner != who {
+            p.down = false;
+        }
+        Some(p)
+    }
+
     fn local(&self, m: &MonitorInfo) -> Option<Pointer> {
         let r = self.raw?;
         let (x, y, w, h) = m.rect;

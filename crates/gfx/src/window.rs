@@ -16,6 +16,19 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
     match msg {
         WM_NCHITTEST => LRESULT(HTTRANSPARENT_RESULT),
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        // Closing an overlay (an installer's Restart Manager, a session ending) means closing
+        // Snowy: never destroy it on its own and keep running without it.
+        WM_CLOSE => {
+            snowy_core::shutdown::request();
+            LRESULT(0)
+        }
+        WM_QUERYENDSESSION => LRESULT(1),
+        WM_ENDSESSION => {
+            if wp.0 != 0 {
+                snowy_core::shutdown::request();
+            }
+            LRESULT(0)
+        }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }

@@ -471,6 +471,18 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         WM_ERASEBKGND => LRESULT(1),
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_NCHITTEST => LRESULT(HTTRANSPARENT as isize),
+        // See snowy_gfx's overlay window: a close request closes the whole app.
+        WM_CLOSE => {
+            snowy_core::shutdown::request();
+            LRESULT(0)
+        }
+        WM_QUERYENDSESSION => LRESULT(1),
+        WM_ENDSESSION => {
+            if wparam.0 != 0 {
+                snowy_core::shutdown::request();
+            }
+            LRESULT(0)
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }

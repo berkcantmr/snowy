@@ -72,3 +72,20 @@ Filename: "{app}\{#MyAppExe}"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#MyAppExe} /F"; Flags: runhidden; RunOnceId: "KillSnowy"
+
+[Code]
+// Make sure no Snowy process holds snowy.exe before files are replaced (in-app updates start
+// this installer while the tray app is still running). First ask nicely (WM_CLOSE: Snowy saves
+// and quits), then force whatever is left. Runs before Setup's own files-in-use check.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  RC: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#MyAppExe}', '', SW_HIDE, ewWaitUntilTerminated, RC);
+  if RC = 0 then
+    Sleep(1500);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM {#MyAppExe} /F', '', SW_HIDE, ewWaitUntilTerminated, RC);
+  if RC = 0 then
+    Sleep(500);
+  Result := '';
+end;
